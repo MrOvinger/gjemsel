@@ -1,0 +1,2733 @@
+<!DOCTYPE html>
+<html lang="no" class="dark h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gjemsel GPS - Sanntid</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0F172A',
+                        cardbg: '#1E293B',
+                        brand: '#3B82F6',
+                        seeker: '#EF4444',
+                        hider: '#10B981'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- FontAwesome Icons & Inter Font -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            touch-action: manipulation;
+            background-color: #0F172A;
+            color: #F8FAFC;
+        }
+        /* Mørk bakgrunn på Leaflet-kart */
+        .leaflet-container {
+            background: #090D16 !important;
+            font-family: inherit;
+        }
+        /* Gjør standard OpenStreetMap-kartfliser mørke uten behov for API-nøkkel */
+        .leaflet-tile-pane {
+            filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+        }
+        /* Pulserende markør for din egen posisjon */
+        .pulse-marker-self {
+            width: 18px;
+            height: 18px;
+            background: #3B82F6;
+            border: 3px solid #FFFFFF;
+            border-radius: 50%;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
+            position: relative;
+        }
+        .pulse-marker-self::after {
+            content: '';
+            position: absolute;
+            top: -8px;
+            left: -8px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: rgba(59, 130, 246, 0.4);
+            animation: pulse-ring 2s infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.6); opacity: 0.9; }
+            100% { transform: scale(1.8); opacity: 0; }
+        }
+        .custom-div-icon {
+            background: transparent;
+            border: none;
+        }
+        .player-label-icon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body class="h-full w-full overflow-x-hidden flex flex-col justify-between">
+
+    <!-- Toppnavigasjon / Header -->
+    <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-4 py-3 sticky top-0 z-50 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg">
+                <i class="fa-solid fa-location-crosshairs"></i>
+            </div>
+            <h1 class="font-extrabold text-lg tracking-tight bg-gradient-to-r from-blue-400 to-indigo-300 bg-clip-text text-transparent">
+                Gjemsel GPS
+            </h1>
+        </div>
+        <div class="flex items-center gap-2">
+            <!-- Tilkoblingsstatus (Firebase / Lokal modus) -->
+            <div id="connectionStatusBadge" class="text-[11px] px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1.5 shadow-sm cursor-pointer" onclick="openFirebaseModal()" title="Klikk for å endre Firebase-innstillinger">
+                <span class="w-2 h-2 rounded-full bg-amber-400 inline-block" id="connectionDot"></span>
+                <span id="connectionText" class="font-medium">Sjekker modus...</span>
+            </div>
+            <button onclick="openFirebaseModal()" class="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-xs transition" title="Firebase Konfigurasjon">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+            <div id="wakeLockStatus" class="hidden sm:flex text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700/60 items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-slate-500 inline-block" id="wakeLockDot"></span>
+                <span id="wakeLockText">Skjermlås inaktiv</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hovedinnhold -->
+    <main class="flex-1 max-w-md w-full mx-auto p-4 flex flex-col justify-center">
+
+        <!-- VARSELMELDING (TOAST) -->
+        <div id="toastBox" class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[2500] w-11/12 max-w-sm bg-slate-800 border-l-4 border-blue-500 text-slate-100 p-3.5 rounded-r shadow-2xl transition-all duration-300 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <i id="toastIcon" class="fa-solid fa-circle-info text-blue-400 text-lg"></i>
+                <p id="toastMsg" class="text-xs font-medium"></p>
+            </div>
+            <button onclick="hideToast()" class="text-slate-400 hover:text-white px-2">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <!-- SKJERM 1: STARTSKJERM (Opprett eller Bli med) -->
+        <section id="screenStart" class="space-y-6">
+            <div class="text-center space-y-2">
+                <h2 class="text-2xl font-bold tracking-tight text-white">Velkommen til Gjemsel!</h2>
+                <p class="text-sm text-slate-400">Bruk GPS for å leke utendørs gjemsel i sanntid med venner.</p>
+            </div>
+
+            <!-- GPS Tillatelse & Statuskort -->
+            <div id="gpsStatusCard" class="bg-slate-800/90 border border-slate-700 rounded-2xl p-3.5 shadow-lg flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <div id="gpsStatusIconBox" class="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                        <i id="gpsStatusIcon" class="fa-solid fa-location-dot"></i>
+                    </div>
+                    <div>
+                        <div id="gpsStatusTitle" class="text-xs font-bold text-white">GPS ikke aktivert ennå</div>
+                        <div id="gpsStatusDesc" class="text-[11px] text-slate-400">Trykk for å gi nettsiden tilgang til posisjon</div>
+                    </div>
+                </div>
+                <button id="enableGpsBtn" onclick="requestGpsPermission(true)" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs px-3 py-2 rounded-xl transition active:scale-95 shrink-0 shadow">
+                    Aktiver GPS
+                </button>
+            </div>
+
+            <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-5 shadow-xl space-y-4 backdrop-blur">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Ditt Kallenavn</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
+                            <i class="fa-solid fa-user"></i>
+                        </span>
+                        <input type="text" id="playerNameInput" placeholder="F.eks. Markus" 
+                               class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium transition" />
+                    </div>
+                </div>
+
+                <!-- Opprett ny lek -->
+                <button onclick="createNewRoom()" class="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition text-sm">
+                    <i class="fa-solid fa-plus-circle"></i>
+                    Opprett ny lek
+                </button>
+
+                <div class="relative flex py-1 items-center">
+                    <div class="flex-grow border-t border-slate-700"></div>
+                    <span class="flex-shrink mx-3 text-xs text-slate-500 uppercase font-semibold">eller bli med</span>
+                    <div class="flex-grow border-t border-slate-700"></div>
+                </div>
+
+                <!-- Bli med i eksisterende rom -->
+                <div class="space-y-2">
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">Tast inn 6-sifret romkode</label>
+                    <div class="flex gap-2">
+                        <input type="number" pattern="[0-9]*" id="joinCodeInput" placeholder="123456" max="999999"
+                               class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-center text-white text-lg font-mono tracking-widest placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <button onclick="joinRoom()" class="bg-slate-700 hover:bg-slate-600 text-white font-bold px-5 py-3 rounded-xl transition active:scale-[0.98] text-sm flex items-center gap-1.5">
+                            <span>Bli med</span>
+                            <i class="fa-solid fa-arrow-right text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Infobokser -->
+            <div class="grid grid-cols-2 gap-3 text-xs">
+                <div class="bg-slate-800/40 border border-slate-700/40 p-3 rounded-xl flex items-center gap-2.5">
+                    <i class="fa-solid fa-battery-charging text-emerald-400 text-base"></i>
+                    <div>
+                        <div class="font-semibold text-slate-200">30s GPS-intervall</div>
+                        <div class="text-[10px] text-slate-400">Sparer batteri</div>
+                    </div>
+                </div>
+                <div class="bg-slate-800/40 border border-slate-700/40 p-3 rounded-xl flex items-center gap-2.5">
+                    <i class="fa-solid fa-sun text-amber-400 text-base"></i>
+                    <div>
+                        <div class="font-semibold text-slate-200">Screen Wake Lock</div>
+                        <div class="text-[10px] text-slate-400">Skjermen blir på</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SKJERM 2: LOBBY & SPILL-OPPSETT -->
+        <section id="screenLobby" class="hidden space-y-4">
+            <!-- Romkode-banner -->
+            <div class="bg-gradient-to-r from-blue-900/60 to-indigo-900/60 border border-blue-500/40 rounded-2xl p-4 flex items-center justify-between shadow-xl">
+                <div>
+                    <span class="text-[11px] font-bold text-blue-300 uppercase tracking-wider block">Romkode</span>
+                    <div id="lobbyRoomCodeDisplay" class="text-3xl font-extrabold font-mono tracking-widest text-white">------</div>
+                </div>
+                <button onclick="copyRoomCode()" class="bg-blue-600/80 hover:bg-blue-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition active:scale-95 shadow">
+                    <i class="fa-regular fa-copy"></i>
+                    <span id="copyBtnText">Kopier</span>
+                </button>
+            </div>
+
+            <!-- Admin / Deltaker-banner -->
+            <div id="lobbyRoleNotice" class="hidden bg-slate-800/90 border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-xs text-amber-200 flex items-center gap-2">
+                <i class="fa-solid fa-lock text-amber-400"></i>
+                <span>Kun verten (admin) som opprettet leken kan endre spillinnstillingene.</span>
+            </div>
+
+            <!-- Spillere i rommet -->
+            <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-users text-blue-400"></i>
+                        Spillere (<span id="playerCountText">0</span>)
+                    </h3>
+                    <button id="addTestBotBtn" onclick="addTestPlayer()" class="text-xs bg-slate-700 hover:bg-slate-600 text-blue-300 font-medium px-2.5 py-1 rounded-lg transition border border-slate-600/50 flex items-center gap-1">
+                        <i class="fa-solid fa-robot"></i>
+                        + Legg til testspiller
+                    </button>
+                </div>
+                <div id="playerListContainer" class="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    <!-- Dynamiske spillerkort -->
+                </div>
+            </div>
+
+            <!-- LYDVALG FOR «GI ET LITE PIP» (Alle spillere kan velge sin egen lyd) -->
+            <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-2.5">
+                <div class="flex items-center justify-between">
+                    <label for="playerBeepSoundSelect" class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <i class="fa-solid fa-volume-high text-amber-400"></i>
+                        Din lyd ved «Gi et lite pip»
+                    </label>
+                    <button onclick="previewMyBeepSound()" class="text-[11px] bg-slate-700 hover:bg-slate-600 text-amber-300 font-semibold px-2.5 py-1 rounded-lg transition flex items-center gap-1">
+                        <i class="fa-solid fa-play text-[10px]"></i> Hør lyd
+                    </button>
+                </div>
+                <select id="playerBeepSoundSelect" onchange="selectPlayerBeepSound(this.value)"
+                        class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="dog">🐶 Hundebjeff</option>
+                    <option value="airhorn">📣 Airhorn</option>
+                    <option value="alarm">⏰ Vekkerklokke</option>
+                    <option value="whistle">😗 Dommerfløyte</option>
+                </select>
+                <!-- Testknapp for Admin i lobbyen -->
+                <div id="adminTestBeepContainer" class="pt-1">
+                    <button onclick="triggerSeekerBeep(true)" class="w-full bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition active:scale-95">
+                        <i class="fa-solid fa-bell"></i>
+                        Test «Gi et lite pip» på alle telefoner
+                    </button>
+                </div>
+            </div>
+
+            <!-- OPPSETT-STEG -->
+            <div class="space-y-4">
+                
+                <!-- STEG 1: Velg Størrelse (Nedtrekksmeny) -->
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-2.5">
+                    <label for="radiusSelect" class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                        <span>Steg 1: Rekkevidde på leteområde</span>
+                        <span id="chosenRadiusBadge" class="text-blue-400 font-mono text-sm font-extrabold">35m</span>
+                    </label>
+                    <select id="radiusSelect" onchange="setZoneRadius(this.value)"
+                            class="admin-only-control w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed">
+                        <option value="20">20 meter (Lite område)</option>
+                        <option value="35" selected>35 meter (Standard)</option>
+                        <option value="60">60 meter (Stort område)</option>
+                        <option value="100">100 meter (Ekstra stort område)</option>
+                    </select>
+                </div>
+
+                <!-- STEG 2: Velg Sentrum på kartet -->
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-2.5">
+                    <div class="flex items-center justify-between mb-0.5">
+                        <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">Steg 2: Velg sentrum på kartet</label>
+                        <button id="centerGpsBtn" onclick="centerPickerOnUserGps()" class="admin-only-control text-[11px] text-blue-400 font-semibold hover:underline flex items-center gap-1 disabled:opacity-50 disabled:pointer-events-none">
+                            <i class="fa-solid fa-location-arrow"></i> 📍 Min GPS
+                        </button>
+                    </div>
+
+                    <!-- Stedsøk -->
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                            </span>
+                            <input type="text" id="locationSearchInput" placeholder="Søk sted eller adresse (f.eks. Frognerparken)..." 
+                                   onkeydown="if(event.key==='Enter') searchLocation()"
+                                   class="admin-only-control w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60" />
+                        </div>
+                        <button id="searchLocationBtn" onclick="searchLocation()" class="admin-only-control bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl transition active:scale-95 flex items-center gap-1 disabled:opacity-50 disabled:pointer-events-none">
+                            <span>Søk</span>
+                        </button>
+                    </div>
+
+                    <!-- Kart for valg av sentrum -->
+                    <div class="relative w-full h-44 rounded-xl overflow-hidden border border-slate-700 shadow-inner">
+                        <div id="pickerMap" class="w-full h-full"></div>
+                        <div id="pickerMapHint" class="absolute bottom-2 left-2 right-2 z-[400] bg-slate-900/90 text-slate-300 text-[10px] px-2 py-1 rounded backdrop-blur border border-slate-700 text-center">
+                            Søk sted, klikk i kartet eller dra nålen for å flytte sentrum
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEG 3: Velg Leter og Gjemmere (Nedtrekksmeny med 4 valg) -->
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-2.5">
+                    <label for="seekerModeSelect" class="text-xs font-bold text-slate-300 uppercase tracking-wider block">Steg 3: Utvelgelse av LETER</label>
+                    
+                    <div class="flex gap-2">
+                        <select id="seekerModeSelect" onchange="changeSeekerSelectionMode(this.value)"
+                                class="admin-only-control flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed">
+                            <option value="manual">Manuell (trykk på spiller i listen)</option>
+                            <option value="random">Tilfeldig</option>
+                            <option value="least_points">Minst poeng (tilfeldig ved likhet)</option>
+                            <option value="most_points">Mest poeng (tilfeldig ved likhet)</option>
+                        </select>
+                        <button id="rerollSeekerBtn" onclick="rerollSeekerByCurrentMode()" title="Trekk leter på nytt"
+                                class="admin-only-control hidden bg-amber-600/20 border border-amber-500/40 hover:bg-amber-600/30 text-amber-300 font-bold px-3 rounded-xl text-xs flex items-center justify-center transition active:scale-95">
+                            <i class="fa-solid fa-dice"></i>
+                        </button>
+                    </div>
+
+                    <p id="seekerModeHintText" class="text-[11px] text-slate-400">
+                        Trykk på en spiller i listen over for å velge manuelt som Leter. Alle andre blir automatisk Gjemmere.
+                    </p>
+                </div>
+
+                <!-- STEG 4: Radar-intervall for leteren -->
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-2.5">
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                        <span>Steg 4: Radar-intervall for leter</span>
+                        <span id="chosenRadarBadge" class="text-indigo-400 font-mono text-xs font-extrabold">Hvert 3. min</span>
+                    </label>
+                    <div class="grid grid-cols-3 gap-2" id="radarOptionsGrid">
+                        <button onclick="setRadarInterval(180)" data-radar="180" class="admin-only-control radar-btn py-2 text-xs font-bold rounded-xl border border-indigo-500 bg-indigo-600/30 text-white shadow disabled:opacity-60">Hvert 3. min</button>
+                        <button onclick="setRadarInterval(300)" data-radar="300" class="admin-only-control radar-btn py-2 text-xs font-bold rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 transition disabled:opacity-60">Hvert 5. min</button>
+                        <button onclick="setRadarInterval(600)" data-radar="600" class="admin-only-control radar-btn py-2 text-xs font-bold rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 transition disabled:opacity-60">Hvert 10. min</button>
+                    </div>
+                    <p class="text-[11px] text-slate-400">
+                        Leteren kan trykke på radarknappen med dette intervallet for å se gjemmernes sanntidsposisjon i 20 sekunder.
+                    </p>
+                </div>
+
+                <!-- STEG 5: Pip-intervall for leteren -->
+                <div class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-4 shadow-md space-y-2.5">
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                        <span>Steg 5: Pip-intervall for leter</span>
+                        <span id="chosenBeepIntervalBadge" class="text-amber-400 font-mono text-xs font-extrabold">Hvert 3. min</span>
+                    </label>
+                    <div class="grid grid-cols-3 gap-2" id="beepIntervalOptionsGrid">
+                        <button onclick="setBeepInterval(180)" data-beep-interval="180" class="admin-only-control beep-interval-btn py-2 text-xs font-bold rounded-xl border border-amber-500 bg-amber-500/20 text-white shadow disabled:opacity-60">Hvert 3. min</button>
+                        <button onclick="setBeepInterval(300)" data-beep-interval="300" class="admin-only-control beep-interval-btn py-2 text-xs font-bold rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 transition disabled:opacity-60">Hvert 5. min</button>
+                        <button onclick="setBeepInterval(600)" data-beep-interval="600" class="admin-only-control beep-interval-btn py-2 text-xs font-bold rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 transition disabled:opacity-60">Hvert 10. min</button>
+                    </div>
+                    <p class="text-[11px] text-slate-400">
+                        Bestemmer hvor ofte leteren kan trykke på «Gi et lite pip» for å få gjemmernes telefoner til å lage lyd.
+                    </p>
+                </div>
+
+                <!-- START-KNAPP -->
+                <button id="startGameBtn" onclick="startGameRound()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-4 px-4 rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition text-base disabled:opacity-50 disabled:pointer-events-none">
+                    <i class="fa-solid fa-play"></i>
+                    <span id="startGameBtnText">Start Leken Nå!</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- SKJERM 3: AKTIV LEK -->
+        <section id="screenActive" class="hidden h-[84vh] flex flex-col space-y-2.5">
+            
+            <!-- Topp rollebanner & GPS-nedtelling -->
+            <div class="flex items-center justify-between gap-2">
+                <div id="myRoleBanner" class="flex-1 p-2.5 rounded-xl border border-emerald-500/60 bg-emerald-950/60 text-emerald-200 text-center font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-eye-slash text-emerald-400"></i> DU GJEMMER DEG
+                </div>
+                <div class="bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-2 text-center shrink-0 shadow-md" title="Neste automatiske GPS-oppdatering">
+                    <span class="block text-[9px] uppercase tracking-wider text-slate-400 font-bold">Neste GPS</span>
+                    <span id="gpsTimerCountdown" class="font-mono text-xs sm:text-sm font-extrabold text-blue-400">30s</span>
+                </div>
+            </div>
+
+            <!-- LETERENS KONTROLLPANEL (Radar-knapp + Gi et lite pip + Meld funnet) -->
+            <div id="seekerControlBar" class="hidden bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 shadow-lg space-y-2">
+                <div class="flex items-center gap-1.5">
+                    <!-- Radarknapp -->
+                    <button id="activateRadarBtn" onclick="activateSeekerRadar()" class="flex-1 py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition shadow bg-slate-700 text-slate-300 border border-slate-600">
+                        <i class="fa-solid fa-satellite-dish"></i>
+                        <span id="radarBtnLabel">Radar om 03:00</span>
+                    </button>
+
+                    <!-- Gi et lite pip-knapp -->
+                    <button id="seekerBeepBtn" onclick="triggerSeekerBeep(false)" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-md shrink-0">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span id="seekerBeepBtnLabel">Gi et lite pip</span>
+                    </button>
+
+                    <!-- Meld funnet-knapp -->
+                    <button onclick="openFoundModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-md shrink-0">
+                        <i class="fa-solid fa-user-check"></i>
+                        <span>Funnet</span>
+                    </button>
+                </div>
+                <div id="pendingRequestBanner" class="hidden text-[11px] bg-amber-500/15 border border-amber-500/40 text-amber-200 px-2.5 py-1.5 rounded-lg flex items-center justify-between">
+                    <span id="pendingRequestText">Venter på bekreftelse...</span>
+                    <button onclick="cancelPendingFound()" class="text-amber-300 underline font-semibold ml-2">Avbryt</button>
+                </div>
+            </div>
+
+            <!-- GJEMMERENS PIP-VARSEL (Vises når leteren trykker Gi et lite pip) -->
+            <div id="hiderBeepAlert" class="hidden bg-amber-600/95 text-slate-950 border border-amber-300 px-3 py-2 rounded-xl text-xs font-extrabold flex items-center justify-between shadow-lg animate-pulse">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-volume-high text-base"></i>
+                    <span id="hiderBeepAlertText">Leteren ba om et lite pip! Spiller av lyden din...</span>
+                </div>
+            </div>
+
+            <!-- GJEMMERENS RADAR-VARSEL (Vises når leteren skanner) -->
+            <div id="hiderRadarAlert" class="hidden bg-indigo-900/90 text-indigo-100 border border-indigo-400/60 px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-between shadow-lg">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-satellite-dish text-indigo-300 animate-pulse"></i>
+                    <span>Leteren bruker radaren nå! Posisjonen din vises.</span>
+                </div>
+                <span id="hiderRadarSecsText" class="font-mono bg-indigo-950 px-2 py-0.5 rounded text-[11px]">20s</span>
+            </div>
+
+            <!-- Grensevarsel utenfor sirkel -->
+            <div id="boundaryAlert" class="hidden bg-red-600/95 text-white border border-red-300 px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between gap-2 shadow-lg">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-triangle-exclamation text-base animate-bounce shrink-0"></i>
+                    <div>
+                        <div id="boundaryAlertTitle">ADVARSEL: Du er utenfor leteområdet!</div>
+                        <div id="boundaryCountdownText" class="text-[11px] font-extrabold text-red-100">Kom innenfor innen 60s eller bli markert som funnet!</div>
+                    </div>
+                </div>
+                <span id="outDistanceText" class="font-mono bg-red-900/90 border border-red-400/40 px-2 py-1 rounded text-[11px] shrink-0"></span>
+            </div>
+
+            <!-- HOVEDKART FOR AKTIV LEK -->
+            <div class="flex-1 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl relative">
+                <div id="activeMap" class="w-full h-full"></div>
+                
+                <!-- Hurtigknapper på kartet -->
+                <div class="absolute top-3 right-3 z-[400] flex flex-col gap-2">
+                    <button onclick="recenterActiveMap()" title="Sentrer på meg" class="w-10 h-10 bg-slate-900/90 border border-slate-700 text-white rounded-xl flex items-center justify-center shadow-lg active:scale-95 text-sm">
+                        <i class="fa-solid fa-crosshairs"></i>
+                    </button>
+                    <button onclick="forceGpsSync()" title="Tving GPS-oppdatering nå" class="w-10 h-10 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg active:scale-95 text-sm">
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                </div>
+
+                <!-- Statuslinje nederst på kartet -->
+                <div class="absolute bottom-3 left-3 right-3 z-[400] bg-slate-900/90 backdrop-blur border border-slate-700/80 rounded-xl p-2.5 shadow-xl flex items-center justify-between text-xs">
+                    <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                            <span class="text-slate-300">Igjen: <b id="hiderCountText" class="text-white">0</b></span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                            <span class="text-slate-300">Funnet: <b id="foundCountText" class="text-white">0</b></span>
+                        </div>
+                    </div>
+                    <button onclick="endRound()" class="bg-red-600/80 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg font-bold text-xs transition active:scale-95">
+                        Avslutt runde
+                    </button>
+                </div>
+            </div>
+
+            <!-- Test- og hurtigverktøy under kartet -->
+            <div class="flex justify-between items-center text-[11px] text-slate-400 px-1">
+                <span>GPS oppdateres automatisk hvert 30. sekund</span>
+                <div class="flex items-center gap-3">
+                    <button id="unlockRadarTestBtn" onclick="unlockRadarForTesting()" class="hidden text-indigo-400 hover:underline flex items-center gap-1">
+                        <i class="fa-solid fa-unlock text-[10px]"></i> Lås opp radar/pip (test)
+                    </button>
+                    <button onclick="forceGpsSync()" class="text-blue-400 hover:underline flex items-center gap-1">
+                        <i class="fa-solid fa-bolt text-xs"></i> Send GPS nå
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- SKJERM 4: POENGTAVLE / RESULTAT ETTER RUNDE -->
+        <section id="screenScoreboard" class="hidden space-y-5">
+            <div class="text-center space-y-1.5">
+                <div class="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto text-xl shadow-lg">
+                    <i class="fa-solid fa-trophy"></i>
+                </div>
+                <h2 class="text-2xl font-extrabold text-white">Runden er ferdig!</h2>
+                <p class="text-xs text-slate-400">Jo lenger du holder deg gjemt, desto flere poeng får du.</p>
+            </div>
+
+            <div class="bg-slate-800/90 border border-slate-700 rounded-2xl p-4 shadow-xl space-y-3">
+                <div class="flex items-center justify-between border-b border-slate-700/80 pb-2">
+                    <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Poengoversikt</span>
+                    <span class="text-[11px] text-slate-400">Runde / Totalt</span>
+                </div>
+                <div id="scoreboardListContainer" class="space-y-2">
+                    <!-- Dynamisk poengliste -->
+                </div>
+            </div>
+
+            <button id="nextRoundLobbyBtn" onclick="returnToLobbyForNextRound()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition text-sm">
+                <i class="fa-solid fa-rotate-right"></i>
+                <span id="nextRoundBtnText">Ny runde i samme rom</span>
+            </button>
+        </section>
+
+    </main>
+
+    <!-- MODAL 1: LETER VELGER HVEM SOM ER FUNNET (z-[2000] ligger alltid over Leaflet-kartet) -->
+    <div id="foundSelectModal" class="hidden fixed inset-0 z-[2000] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="font-bold text-white text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-user-check text-emerald-400"></i>
+                    Hvem har du funnet?
+                </h3>
+                <button onclick="closeFoundModal()" class="text-slate-400 hover:text-white px-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-400">
+                Velg spilleren du har funnet. Spilleren får opp et varsel på sin telefon og må godkjenne at de er funnet.
+            </p>
+
+            <div id="foundCandidatesList" class="space-y-2 max-h-60 overflow-y-auto">
+                <!-- Dynamiske gjemmere som kan velges -->
+            </div>
+
+            <button onclick="closeFoundModal()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl text-xs transition">
+                Lukk
+            </button>
+        </div>
+    </div>
+
+    <!-- MODAL 2: GJEMMER BEKREFTER AT DE ER FUNNET (z-[2000] ligger alltid over Leaflet-kartet) -->
+    <div id="confirmFoundModal" class="hidden fixed inset-0 z-[2000] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border-2 border-amber-500/70 rounded-2xl max-w-sm w-full p-6 space-y-5 shadow-2xl text-center">
+            <div class="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto text-2xl animate-bounce">
+                <i class="fa-solid fa-hand-point-up"></i>
+            </div>
+
+            <div class="space-y-1.5">
+                <h3 class="text-lg font-extrabold text-white">Har leteren funnet deg?</h3>
+                <p id="confirmFoundDesc" class="text-xs text-slate-300 leading-relaxed">
+                    Leteren melder at du er funnet! Bekreft på telefonen din for å registrere poengene dine.
+                </p>
+            </div>
+
+            <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 text-xs text-slate-300">
+                Du blir funnet som nr. <b id="confirmFoundRankPreview" class="text-amber-400 text-sm">1</b> og får <b id="confirmFoundPointsPreview" class="text-emerald-400 text-sm">1 poeng</b>.
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="respondToFoundRequest(false)" class="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold py-3 px-3 rounded-xl text-xs transition active:scale-95">
+                    Nei, ikke funnet
+                </button>
+                <button onclick="respondToFoundRequest(true)" class="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3 px-3 rounded-xl text-xs shadow-lg shadow-emerald-600/30 transition active:scale-95">
+                    Ja, jeg er funnet!
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: FIREBASE KONFIGURASJON -->
+    <div id="firebaseModal" class="hidden fixed inset-0 z-[2000] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="font-bold text-white text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-cloud-bolt text-blue-400"></i>
+                    Firebase Konfigurasjon
+                </h3>
+                <button onclick="closeFirebaseModal()" class="text-slate-400 hover:text-white px-1">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-300 leading-relaxed">
+                Appen kjører nå i <b id="modalCurrentMode" class="text-amber-400">Lokal / Testmodus</b>.
+            </p>
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+                Lim inn <code class="text-blue-300">firebaseConfig</code> fra Firebase Console under for å bruke eget prosjekt:
+            </p>
+
+            <textarea id="customFirebaseConfigInput" rows="5" placeholder='const firebaseConfig = {&#10;  apiKey: "...",&#10;  authDomain: "...",&#10;  projectId: "..."&#10;};' 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"></textarea>
+
+            <div class="flex gap-2">
+                <button onclick="saveCustomFirebaseConfig()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition">
+                    Lagre & Koble til
+                </button>
+                <button onclick="useLocalModeOnly()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold px-3 py-2.5 rounded-xl text-xs transition">
+                    Bruk Lokal Modus
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="text-center py-2 text-[10px] text-slate-600 border-t border-slate-800/60">
+        Gjemsel GPS &bull; PWA & Screen Wake Lock Støttet
+    </footer>
+
+    <!-- FIREBASE INITIALISERING & SPILL-LOGIKK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // =========================================================================
+        // KOBLET TIL DITT FIREBASE-PROSJEKT (gjemsel-app):
+        // =========================================================================
+        const HARDCODED_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyD-0m5jD2tUR04eEKM9cXUVW7QmApT1Jp0",
+            authDomain: "gjemsel-app.firebaseapp.com",
+            projectId: "gjemsel-app",
+            storageBucket: "gjemsel-app.firebasestorage.app",
+            messagingSenderId: "413413016926",
+            appId: "1:413413016926:web:34512fd6751ba8bdfe3bcf"
+        };
+
+        // Trygg lagring i nettleser (forhindrer feil i sandkassede iframes)
+        function safeGetStorage(key) {
+            try { return window.localStorage.getItem(key); } catch (e) { return null; }
+        }
+        function safeSetStorage(key, val) {
+            try { window.localStorage.setItem(key, val); } catch (e) {}
+        }
+        function safeRemoveStorage(key) {
+            try { window.localStorage.removeItem(key); } catch (e) {}
+        }
+
+        // Hent aktiv Firebase-konfigurasjon
+        let firebaseConfig = HARDCODED_FIREBASE_CONFIG;
+        const forceLocal = safeGetStorage('gjemsel_force_local') === 'true';
+        const savedCustomConfig = safeGetStorage('gjemsel_firebase_config');
+
+        if (forceLocal) {
+            firebaseConfig = null;
+        } else if (savedCustomConfig) {
+            try { firebaseConfig = JSON.parse(savedCustomConfig); } catch (e) {}
+        } else if (!firebaseConfig && typeof __firebase_config !== 'undefined' && __firebase_config) {
+            try { firebaseConfig = JSON.parse(__firebase_config); } catch (e) {}
+        }
+
+        // Tilstandsvariabler
+        let isLocalMode = true;
+        let app = null;
+        let auth = null;
+        let db = null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'gjemsel-default';
+
+        let userId = safeGetStorage('gjemsel_uid') || ('user_' + Math.random().toString(36).substring(2, 10));
+        safeSetStorage('gjemsel_uid', userId);
+
+        let currentRoomCode = null;
+        let currentRoomData = null;
+        let unsubscribeRoom = null;
+        const localRoomsStore = {};
+
+        // Kart-, radar- og GPS-tilstand
+        let pickerMap = null;
+        let pickerMarker = null;
+        let pickerCircle = null;
+        let activeMap = null;
+        let activeZoneCircle = null;
+        let playerMarkers = {};
+        let gpsCountdown = 30;
+        let gameTickIntervalId = null;
+        let wakeLockSentinel = null;
+        let latestGpsCoords = null;
+        let gpsWatchId = null;
+        let lastSeenRadarScanAt = 0;
+        let lastHandledBeepId = 0;
+        let sharedAudioCtx = null;
+        let outOfZoneSince = null;
+        let autoFoundInProgress = false;
+
+        // -------------------------------------------------------------
+        // WEB AUDIO API: 4 SYNTETISERTE LYDER FOR «GI ET LITE PIP»
+        // (Spilles av 2 ganger per aktivering)
+        // -------------------------------------------------------------
+        const BEEP_SOUND_LABELS = {
+            dog: '🐶 Hundebjeff',
+            airhorn: '📣 Airhorn',
+            alarm: '⏰ Vekkerklokke',
+            whistle: '😗 Dommerfløyte'
+        };
+
+        function getAudioContext() {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            if (!sharedAudioCtx) {
+                sharedAudioCtx = new AudioCtx();
+            }
+            if (sharedAudioCtx.state === 'suspended') {
+                sharedAudioCtx.resume().catch(() => {});
+            }
+            return sharedAudioCtx;
+        }
+
+        // Lås opp lydkontekst ved første berøring/klikk på siden (kreves av Safari/iOS)
+        ['touchstart', 'click'].forEach((evt) => {
+            document.addEventListener(evt, () => {
+                getAudioContext();
+            }, { passive: true });
+        });
+
+        function playSelectedSound(soundKey = 'dog') {
+            const ctx = getAudioContext();
+            if (!ctx) return;
+            const baseNow = ctx.currentTime;
+
+            const playSinglePass = (startTime) => {
+                if (soundKey === 'dog') {
+                    // Skarpere hundebjeff: To kontante "voff-voff" med overtoner og skarpere resonans
+                    [0, 0.27].forEach((offset) => {
+                        const t = startTime + offset;
+                        const osc1 = ctx.createOscillator();
+                        const osc2 = ctx.createOscillator();
+                        const filter = ctx.createBiquadFilter();
+                        const gain = ctx.createGain();
+
+                        osc1.type = 'sawtooth';
+                        osc1.frequency.setValueAtTime(360, t);
+                        osc1.frequency.exponentialRampToValueAtTime(790, t + 0.025);
+                        osc1.frequency.exponentialRampToValueAtTime(175, t + 0.14);
+
+                        osc2.type = 'square';
+                        osc2.frequency.setValueAtTime(540, t);
+                        osc2.frequency.exponentialRampToValueAtTime(1180, t + 0.025);
+                        osc2.frequency.exponentialRampToValueAtTime(260, t + 0.14);
+
+                        filter.type = 'bandpass';
+                        filter.frequency.setValueAtTime(1180, t);
+                        filter.Q.setValueAtTime(3.2, t);
+
+                        gain.gain.setValueAtTime(0.01, t);
+                        gain.gain.linearRampToValueAtTime(0.75, t + 0.012);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+
+                        osc1.connect(filter);
+                        osc2.connect(filter);
+                        filter.connect(gain);
+                        gain.connect(ctx.destination);
+
+                        osc1.start(t);
+                        osc2.start(t);
+                        osc1.stop(t + 0.16);
+                        osc2.stop(t + 0.16);
+                    });
+                } else if (soundKey === 'airhorn') {
+                    // Airhorn: Klassisk stadion-airhorn med flere stemte oscillatorer
+                    const pattern = [
+                        { start: 0, dur: 0.14 },
+                        { start: 0.18, dur: 0.14 },
+                        { start: 0.36, dur: 0.55 }
+                    ];
+                    pattern.forEach((note) => {
+                        [440, 554.37, 659.25].forEach((freq) => {
+                            const osc = ctx.createOscillator();
+                            const gain = ctx.createGain();
+                            osc.type = 'sawtooth';
+                            osc.frequency.setValueAtTime(freq, startTime + note.start);
+                            osc.frequency.linearRampToValueAtTime(freq * 0.98, startTime + note.start + note.dur);
+
+                            gain.gain.setValueAtTime(0.01, startTime + note.start);
+                            gain.gain.linearRampToValueAtTime(0.22, startTime + note.start + 0.015);
+                            gain.gain.exponentialRampToValueAtTime(0.001, startTime + note.start + note.dur);
+
+                            osc.connect(gain);
+                            gain.connect(ctx.destination);
+
+                            osc.start(startTime + note.start);
+                            osc.stop(startTime + note.start + note.dur + 0.02);
+                        });
+                    });
+                } else if (soundKey === 'alarm') {
+                    // Vekkerklokke: Høyfrekvent "BEEP-BEEP-BEEP-BEEP"
+                    [0, 0.12, 0.24, 0.36, 0.62, 0.74, 0.86, 0.98].forEach((offset) => {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'square';
+                        osc.frequency.setValueAtTime(2048, startTime + offset);
+
+                        gain.gain.setValueAtTime(0.001, startTime + offset);
+                        gain.gain.linearRampToValueAtTime(0.28, startTime + offset + 0.008);
+                        gain.gain.exponentialRampToValueAtTime(0.001, startTime + offset + 0.08);
+
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+
+                        osc.start(startTime + offset);
+                        osc.stop(startTime + offset + 0.09);
+                    });
+                } else if (soundKey === 'whistle') {
+                    // Dommerfløyte: ~2850 Hz med 36 Hz vibrato/trille
+                    const osc = ctx.createOscillator();
+                    const lfo = ctx.createOscillator();
+                    const lfoGain = ctx.createGain();
+                    const mainGain = ctx.createGain();
+
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(2850, startTime);
+                    osc.frequency.linearRampToValueAtTime(2950, startTime + 0.1);
+                    osc.frequency.linearRampToValueAtTime(2800, startTime + 0.75);
+
+                    lfo.type = 'sine';
+                    lfo.frequency.setValueAtTime(36, startTime);
+                    lfoGain.gain.setValueAtTime(110, startTime);
+
+                    lfo.connect(lfoGain);
+                    lfoGain.connect(osc.frequency);
+
+                    mainGain.gain.setValueAtTime(0.001, startTime);
+                    mainGain.gain.linearRampToValueAtTime(0.45, startTime + 0.03);
+                    mainGain.gain.setValueAtTime(0.42, startTime + 0.62);
+                    mainGain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.78);
+
+                    osc.connect(mainGain);
+                    mainGain.connect(ctx.destination);
+
+                    osc.start(startTime);
+                    lfo.start(startTime);
+                    osc.stop(startTime + 0.8);
+                    lfo.stop(startTime + 0.8);
+                }
+            };
+
+            const repeatGapBySound = {
+                dog: 0.72,
+                airhorn: 1.15,
+                alarm: 1.3,
+                whistle: 1.05
+            };
+            const secondPassOffset = repeatGapBySound[soundKey] || 1.0;
+
+            // Spill av lyden to ganger
+            playSinglePass(baseNow);
+            playSinglePass(baseNow + secondPassOffset);
+        }
+
+        function previewMyBeepSound() {
+            const selectEl = document.getElementById('playerBeepSoundSelect');
+            const chosen = selectEl ? selectEl.value : (safeGetStorage('gjemsel_beep_sound') || 'dog');
+            playSelectedSound(chosen);
+        }
+
+        async function selectPlayerBeepSound(soundKey) {
+            safeSetStorage('gjemsel_beep_sound', soundKey);
+            playSelectedSound(soundKey);
+            if (currentRoomData && currentRoomData.players?.[userId]) {
+                await syncRoomUpdates({
+                    [`players.${userId}.beepSound`]: soundKey
+                });
+            }
+            showToast(`Valgte lyd: ${BEEP_SOUND_LABELS[soundKey] || soundKey}`, 'info');
+        }
+
+        async function triggerSeekerBeep(isTest = false) {
+            if (!currentRoomData) return;
+            const isAdmin = currentRoomData.hostId === userId;
+            const me = currentRoomData.players?.[userId];
+
+            if (isTest && !isAdmin) {
+                showToast("Kun verten (admin) kan teste lyden i lobbyen.", "warning");
+                return;
+            }
+            if (!isTest && me?.role !== 'seeker') return;
+
+            const now = Date.now();
+            if (!isTest && now < (currentRoomData.nextBeepAvailableAt || 0)) {
+                showToast("Pip-funksjonen lader fortsatt opp. Vent til nedtellingen er ferdig.", "warning");
+                return;
+            }
+
+            const beepId = now;
+            lastHandledBeepId = beepId;
+            const beepIntervalMs = (currentRoomData.beepInterval || 180) * 1000;
+
+            const updates = {
+                beepEvent: {
+                    id: beepId,
+                    by: me?.name || 'Leter',
+                    isTest: Boolean(isTest)
+                }
+            };
+            if (!isTest) {
+                updates.nextBeepAvailableAt = now + beepIntervalMs;
+            }
+
+            await syncRoomUpdates(updates);
+
+            if (isTest) {
+                // Spill også av egen lyd lokalt for admin ved test i lobbyen
+                const mySound = me?.beepSound || safeGetStorage('gjemsel_beep_sound') || 'dog';
+                playSelectedSound(mySound);
+                showToast("Test-pip sendt til alle telefoner i lobbyen!", "success");
+            } else {
+                showToast("Signal sendt! Alle gjemmere gir nå et lite pip.", "success");
+            }
+        }
+
+        function checkIncomingBeepEvent(data) {
+            const evt = data?.beepEvent;
+            if (!evt || !evt.id || evt.id <= lastHandledBeepId) return;
+            // Ignorer gamle hendelser som er eldre enn 15 sekunder ved innlasting
+            if (Date.now() - evt.id > 15000) {
+                lastHandledBeepId = evt.id;
+                return;
+            }
+
+            lastHandledBeepId = evt.id;
+            const me = data.players?.[userId];
+            if (!me) return;
+
+            // I aktiv lek er det gjemmerne (som ikke er funnet) som skal gi fra seg lyd.
+            // I lobby-test spiller alle telefoner av lyden sin.
+            const shouldPlay = evt.isTest || (me.role === 'hider' && me.status !== 'found');
+            if (shouldPlay) {
+                const mySound = me.beepSound || safeGetStorage('gjemsel_beep_sound') || 'dog';
+                playSelectedSound(mySound);
+
+                if (evt.isTest) {
+                    showToast(`🔊 Test-pip fra ${evt.by}! (${BEEP_SOUND_LABELS[mySound]})`, 'info');
+                } else {
+                    const banner = document.getElementById('hiderBeepAlert');
+                    const bannerText = document.getElementById('hiderBeepAlertText');
+                    if (banner && bannerText) {
+                        bannerText.textContent = `${evt.by} ba om et lite pip! (${BEEP_SOUND_LABELS[mySound]})`;
+                        banner.classList.remove('hidden');
+                        setTimeout(() => banner.classList.add('hidden'), 5000);
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // GPS-TILLATELSE & KONTINUERLIG POSISJONSHENTING
+        // -------------------------------------------------------------
+        function updateGpsStatusCard(state, detailText = '') {
+            const card = document.getElementById('gpsStatusCard');
+            const iconBox = document.getElementById('gpsStatusIconBox');
+            const icon = document.getElementById('gpsStatusIcon');
+            const title = document.getElementById('gpsStatusTitle');
+            const desc = document.getElementById('gpsStatusDesc');
+            const btn = document.getElementById('enableGpsBtn');
+            if (!card || !title || !desc || !btn) return;
+
+            if (state === 'granted') {
+                card.className = 'bg-emerald-950/40 border border-emerald-500/40 rounded-2xl p-3.5 shadow-lg flex items-center justify-between gap-3';
+                iconBox.className = 'w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0';
+                icon.className = 'fa-solid fa-location-crosshairs';
+                title.textContent = 'GPS aktivert og klar';
+                desc.textContent = detailText || 'Posisjonen din deles automatisk hvert 30. sekund';
+                btn.textContent = 'Oppdater';
+                btn.className = 'bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 border border-emerald-500/40 font-bold text-xs px-3 py-2 rounded-xl transition active:scale-95 shrink-0';
+            } else if (state === 'denied') {
+                const inIframe = window.self !== window.top;
+                card.className = 'bg-red-950/40 border border-red-500/40 rounded-2xl p-3.5 shadow-lg flex items-center justify-between gap-3';
+                iconBox.className = 'w-9 h-9 rounded-xl bg-red-500/20 text-red-400 flex items-center justify-center shrink-0';
+                icon.className = 'fa-solid fa-triangle-exclamation';
+                title.textContent = inIframe ? 'GPS blokkert av innebygd ramme' : 'GPS-tilgang ble avslått';
+                desc.textContent = inIframe
+                    ? 'Google Sites sperrer GPS i innebygd kode. Publiser filen direkte (f.eks. via Netlify) for mobil-GPS.'
+                    : 'Gi posisjonstillatelse i nettleserens innstillinger og prøv igjen.';
+                btn.textContent = 'Prøv igjen';
+                btn.className = 'bg-red-600 hover:bg-red-500 text-white font-bold text-xs px-3 py-2 rounded-xl transition active:scale-95 shrink-0';
+            } else if (state === 'unsupported') {
+                card.className = 'bg-slate-800/90 border border-slate-700 rounded-2xl p-3.5 shadow-lg flex items-center justify-between gap-3';
+                iconBox.className = 'w-9 h-9 rounded-xl bg-slate-700 text-slate-300 flex items-center justify-center shrink-0';
+                icon.className = 'fa-solid fa-desktop';
+                title.textContent = 'Enheten mangler GPS';
+                desc.textContent = 'Du kan fortsatt velge sted manuelt i kartet';
+                btn.classList.add('hidden');
+            }
+        }
+
+        function startGpsWatch() {
+            if (!navigator.geolocation || gpsWatchId !== null) return;
+            gpsWatchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    latestGpsCoords = {
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        accuracy: Math.round(pos.coords.accuracy || 0),
+                        timestamp: Date.now()
+                    };
+                    updateGpsStatusCard('granted', `Nøyaktighet: ca. ${latestGpsCoords.accuracy} meter`);
+                    if (currentRoomData?.status === 'active') {
+                        evaluateZoneBoundary();
+                    }
+                },
+                (err) => {
+                    if (err.code === 1) {
+                        updateGpsStatusCard('denied');
+                    }
+                },
+                { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+            );
+        }
+
+        function requestGpsPermission(showFeedback = true) {
+            return new Promise((resolve) => {
+                if (!navigator.geolocation) {
+                    updateGpsStatusCard('unsupported');
+                    if (showFeedback) showToast('Denne enheten støtter ikke GPS.', 'warning');
+                    resolve(null);
+                    return;
+                }
+
+                if (showFeedback) {
+                    showToast('Ber om tilgang til GPS-posisjon...', 'info');
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        latestGpsCoords = {
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            accuracy: Math.round(pos.coords.accuracy || 0),
+                            timestamp: Date.now()
+                        };
+                        updateGpsStatusCard('granted', `Nøyaktighet: ca. ${latestGpsCoords.accuracy} meter`);
+                        startGpsWatch();
+                        if (showFeedback) showToast('GPS-posisjon aktivert!', 'success');
+                        resolve(latestGpsCoords);
+                    },
+                    (err) => {
+                        if (err.code === 1) {
+                            updateGpsStatusCard('denied');
+                            if (showFeedback) {
+                                const inIframe = window.self !== window.top;
+                                showToast(
+                                    inIframe
+                                        ? 'Google Sites blokkerer GPS i innebygd kode. Publiser filen direkte for å bruke GPS.'
+                                        : 'Tilgang til GPS ble avslått i nettleseren.',
+                                    'error'
+                                );
+                            }
+                        } else if (showFeedback) {
+                            showToast('Fant ikke GPS-signal akkurat nå, men tillatelse er forespurt.', 'warning');
+                        }
+                        resolve(null);
+                    },
+                    { enableHighAccuracy: true, timeout: 6000, maximumAge: 5000 }
+                );
+            });
+        }
+
+        async function checkInitialGpsStatus() {
+            if (!navigator.geolocation) {
+                updateGpsStatusCard('unsupported');
+                return;
+            }
+            if (navigator.permissions && navigator.permissions.query) {
+                try {
+                    const status = await navigator.permissions.query({ name: 'geolocation' });
+                    if (status.state === 'granted') {
+                        updateGpsStatusCard('granted');
+                        startGpsWatch();
+                    } else if (status.state === 'denied') {
+                        updateGpsStatusCard('denied');
+                    }
+                } catch (e) {}
+            }
+        }
+
+        // -------------------------------------------------------------
+        // VARSELMELDINGER (TOAST)
+        // -------------------------------------------------------------
+        let toastTimeout = null;
+        function showToast(msg, type = 'info') {
+            const box = document.getElementById('toastBox');
+            const msgEl = document.getElementById('toastMsg');
+            const iconEl = document.getElementById('toastIcon');
+            if (!box || !msgEl || !iconEl) return;
+
+            msgEl.textContent = msg;
+            box.classList.remove('border-blue-500', 'border-emerald-500', 'border-red-500', 'border-amber-500');
+            iconEl.className = 'fa-solid text-lg';
+
+            if (type === 'success') {
+                box.classList.add('border-emerald-500');
+                iconEl.classList.add('fa-circle-check', 'text-emerald-400');
+            } else if (type === 'error') {
+                box.classList.add('border-red-500');
+                iconEl.classList.add('fa-circle-exclamation', 'text-red-400');
+            } else if (type === 'warning') {
+                box.classList.add('border-amber-500');
+                iconEl.classList.add('fa-triangle-exclamation', 'text-amber-400');
+            } else {
+                box.classList.add('border-blue-500');
+                iconEl.classList.add('fa-circle-info', 'text-blue-400');
+            }
+
+            box.classList.remove('hidden');
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(hideToast, 4000);
+        }
+
+        function hideToast() {
+            const box = document.getElementById('toastBox');
+            if (box) box.classList.add('hidden');
+        }
+
+        // -------------------------------------------------------------
+        // FIREBASE INITIALISERING & MODUS-STATUS
+        // -------------------------------------------------------------
+        function updateConnectionBadge(online) {
+            const dot = document.getElementById('connectionDot');
+            const text = document.getElementById('connectionText');
+            const modalMode = document.getElementById('modalCurrentMode');
+            if (!dot || !text) return;
+
+            if (online) {
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse';
+                text.textContent = 'Sanntid (Firebase)';
+                if (modalMode) {
+                    modalMode.textContent = 'Sanntid (Firebase tilkoblet)';
+                    modalMode.className = 'text-emerald-400';
+                }
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-amber-400 inline-block';
+                text.textContent = 'Lokal modus';
+                if (modalMode) {
+                    modalMode.textContent = 'Lokal / Testmodus';
+                    modalMode.className = 'text-amber-400';
+                }
+            }
+        }
+
+        async function initBackend() {
+            checkInitialGpsStatus();
+            if (!firebaseConfig || !firebaseConfig.apiKey) {
+                isLocalMode = true;
+                updateConnectionBadge(false);
+                return;
+            }
+
+            try {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isLocalMode = false;
+                        updateConnectionBadge(true);
+                    }
+                });
+            } catch (err) {
+                console.warn("Firebase-tilkobling feilet, faller tilbake til lokal modus:", err);
+                isLocalMode = true;
+                updateConnectionBadge(false);
+            }
+        }
+
+        function openFirebaseModal() {
+            document.getElementById('firebaseModal').classList.remove('hidden');
+        }
+
+        function closeFirebaseModal() {
+            document.getElementById('firebaseModal').classList.add('hidden');
+        }
+
+        function parseFlexibleFirebaseConfig(rawText) {
+            let cleaned = rawText
+                .replace(/^(const|let|var)\s+\w+\s*=\s*/i, '')
+                .replace(/;\s*$/, '')
+                .trim();
+
+            try {
+                return JSON.parse(cleaned);
+            } catch (e) {
+                const jsonified = cleaned
+                    .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":')
+                    .replace(/'/g, '"')
+                    .replace(/,\s*}/g, '}');
+                return JSON.parse(jsonified);
+            }
+        }
+
+        function saveCustomFirebaseConfig() {
+            const raw = document.getElementById('customFirebaseConfigInput').value.trim();
+            if (!raw) {
+                showToast("Vennligst lim inn gyldig Firebase-konfigurasjon", "error");
+                return;
+            }
+            try {
+                const parsed = parseFlexibleFirebaseConfig(raw);
+                if (parsed && parsed.apiKey && parsed.projectId) {
+                    safeRemoveStorage('gjemsel_force_local');
+                    safeSetStorage('gjemsel_firebase_config', JSON.stringify(parsed));
+                    showToast("Konfigurasjon lagret! Laster inn på nytt...", "success");
+                    setTimeout(() => window.location.reload(), 800);
+                } else {
+                    showToast("Ugyldig konfigurasjon. Mangler apiKey eller projectId.", "error");
+                }
+            } catch (e) {
+                showToast("Klarte ikke å lese koden. Lim inn hele { apiKey: ... }-blokken.", "error");
+            }
+        }
+
+        function useLocalModeOnly() {
+            safeSetStorage('gjemsel_force_local', 'true');
+            isLocalMode = true;
+            updateConnectionBadge(false);
+            closeFirebaseModal();
+            showToast("Byttet til Lokal / Testmodus", "info");
+        }
+
+        // -------------------------------------------------------------
+        // SKJERM-NAVIGASJON
+        // -------------------------------------------------------------
+        function showScreen(screenId) {
+            ['screenStart', 'screenLobby', 'screenActive', 'screenScoreboard'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
+            const target = document.getElementById(screenId);
+            if (target) target.classList.remove('hidden');
+
+            if (screenId === 'screenLobby') {
+                setTimeout(() => {
+                    initPickerMap();
+                    if (pickerMap) pickerMap.invalidateSize();
+                }, 120);
+            } else if (screenId === 'screenActive') {
+                setTimeout(() => {
+                    initActiveMap();
+                    if (activeMap) activeMap.invalidateSize();
+                }, 120);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // ROM-OPPRETTELSE & DELTAKELSE
+        // -------------------------------------------------------------
+        function getPlayerName() {
+            const input = document.getElementById('playerNameInput');
+            const val = input ? input.value.trim() : '';
+            if (val) {
+                safeSetStorage('gjemsel_name', val);
+                return val;
+            }
+            return 'Spiller_' + Math.floor(10 + Math.random() * 89);
+        }
+
+        async function createNewRoom() {
+            const name = getPlayerName();
+            const code = Math.floor(100000 + Math.random() * 900000).toString();
+            const savedSound = safeGetStorage('gjemsel_beep_sound') || 'dog';
+
+            const gps = latestGpsCoords || (await Promise.race([
+                requestGpsPermission(false),
+                new Promise((r) => setTimeout(() => r(null), 2000))
+            ]));
+
+            const defaultLat = gps ? gps.lat : 59.9139;
+            const defaultLng = gps ? gps.lng : 10.7522;
+
+            const roomData = {
+                code: code,
+                hostId: userId,
+                status: 'lobby',
+                radius: 35, // Standard: 35 meter
+                seekerMode: 'manual', // 'manual' | 'random' | 'least_points' | 'most_points'
+                radarInterval: 180, // Standard: 3 minutter (180 sekunder)
+                beepInterval: 180, // Standard: 3 minutter (180 sekunder)
+                nextRadarAvailableAt: 0,
+                nextBeepAvailableAt: 0,
+                radarRevealedUntil: 0,
+                foundOrder: [],
+                pendingFoundRequest: null,
+                beepEvent: null,
+                center: { lat: defaultLat, lng: defaultLng },
+                players: {
+                    [userId]: {
+                        id: userId,
+                        name: name,
+                        role: 'seeker',
+                        status: 'hiding',
+                        foundRank: null,
+                        roundPoints: 0,
+                        totalPoints: 0,
+                        beepSound: savedSound,
+                        lat: defaultLat,
+                        lng: defaultLng,
+                        lastUpdate: Date.now(),
+                        isBot: false
+                    }
+                }
+            };
+
+            currentRoomCode = code;
+            currentRoomData = roomData;
+            localRoomsStore[code] = roomData;
+
+            if (!isLocalMode && db) {
+                try {
+                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+                    await setDoc(roomRef, roomData);
+                    subscribeToRoom(code);
+                    showToast(`Opprettet rom ${code}!`, 'success');
+                    return;
+                } catch (e) {
+                    console.warn("Firebase-feil ved opprettelse, bruker lokal modus:", e);
+                    isLocalMode = true;
+                    updateConnectionBadge(false);
+                }
+            }
+
+            renderRoomState(roomData);
+            showToast(`Opprettet lokalt rom ${code}!`, 'success');
+        }
+
+        async function joinRoom() {
+            const name = getPlayerName();
+            const codeInput = document.getElementById('joinCodeInput').value.trim();
+            const savedSound = safeGetStorage('gjemsel_beep_sound') || 'dog';
+
+            if (!/^\d{6}$/.test(codeInput)) {
+                showToast("Skriv inn en gyldig 6-sifret romkode.", "error");
+                return;
+            }
+
+            const gps = latestGpsCoords || (await Promise.race([
+                requestGpsPermission(false),
+                new Promise((r) => setTimeout(() => r(null), 2000))
+            ]));
+
+            const newPlayer = {
+                id: userId,
+                name: name,
+                role: 'hider',
+                status: 'hiding',
+                foundRank: null,
+                roundPoints: 0,
+                totalPoints: 0,
+                beepSound: savedSound,
+                lat: gps ? gps.lat : 59.9139,
+                lng: gps ? gps.lng : 10.7522,
+                lastUpdate: Date.now(),
+                isBot: false
+            };
+
+            if (!isLocalMode && db) {
+                try {
+                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', codeInput);
+                    const roomSnap = await getDoc(roomRef);
+                    if (!roomSnap.exists()) {
+                        showToast("Fant ikke noe aktivt rom med denne koden.", 'error');
+                        return;
+                    }
+                    const existingData = roomSnap.data();
+                    if (!gps) {
+                        newPlayer.lat = existingData.center?.lat || 59.9139;
+                        newPlayer.lng = existingData.center?.lng || 10.7522;
+                    }
+
+                    await updateDoc(roomRef, {
+                        [`players.${userId}`]: newPlayer
+                    });
+                    currentRoomCode = codeInput;
+                    subscribeToRoom(codeInput);
+                    showToast(`Ble med i rom ${codeInput}!`, 'success');
+                    return;
+                } catch (e) {
+                    console.warn("Klarte ikke å koble til eksternt rom, sjekker lokal lagring:", e);
+                }
+            }
+
+            if (localRoomsStore[codeInput]) {
+                currentRoomCode = codeInput;
+                localRoomsStore[codeInput].players[userId] = newPlayer;
+                renderRoomState(localRoomsStore[codeInput]);
+                showToast(`Ble med i lokalt rom ${codeInput}!`, 'success');
+            } else {
+                showToast("Fant ikke romkoden. Sjekk at dere er på samme tilkobling.", "error");
+            }
+        }
+
+        function subscribeToRoom(code) {
+            if (unsubscribeRoom) unsubscribeRoom();
+            if (isLocalMode || !db) return;
+
+            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', code);
+            unsubscribeRoom = onSnapshot(roomRef, (snap) => {
+                if (snap.exists()) {
+                    const data = snap.data();
+                    currentRoomData = data;
+                    renderRoomState(data);
+                }
+            }, (err) => {
+                console.warn("Sanntidslytter feilet:", err);
+            });
+        }
+
+        async function syncRoomUpdates(partialData) {
+            if (!currentRoomData || !currentRoomCode) return;
+
+            // Oppdater lokalt først for rask respons
+            Object.keys(partialData).forEach((key) => {
+                if (key.startsWith('players.')) {
+                    const parts = key.split('.');
+                    if (currentRoomData.players[parts[1]]) {
+                        if (parts.length === 2) {
+                            currentRoomData.players[parts[1]] = partialData[key];
+                        } else if (parts.length === 3) {
+                            currentRoomData.players[parts[1]][parts[2]] = partialData[key];
+                        }
+                    }
+                } else {
+                    currentRoomData[key] = partialData[key];
+                }
+            });
+
+            if (!isLocalMode && db) {
+                try {
+                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomCode);
+                    await updateDoc(roomRef, partialData);
+                } catch (e) {
+                    console.warn("Kunne ikke lagre endring til Firebase:", e);
+                }
+            } else {
+                renderRoomState(currentRoomData);
+            }
+        }
+
+        function renderRoomState(data) {
+            currentRoomData = data;
+            checkIncomingBeepEvent(data);
+
+            if (data.status === 'active') {
+                if (document.getElementById('screenActive').classList.contains('hidden')) {
+                    showScreen('screenActive');
+                    startGameLoop();
+                    requestWakeLock();
+                }
+                updateActiveScreenUI(data);
+            } else if (data.status === 'scoreboard') {
+                stopGameLoop();
+                releaseWakeLock();
+                closeFoundModal();
+                document.getElementById('confirmFoundModal').classList.add('hidden');
+                if (document.getElementById('screenScoreboard').classList.contains('hidden')) {
+                    showScreen('screenScoreboard');
+                }
+                updateScoreboardUI(data);
+            } else {
+                stopGameLoop();
+                closeFoundModal();
+                document.getElementById('confirmFoundModal').classList.add('hidden');
+                if (document.getElementById('screenLobby').classList.contains('hidden')) {
+                    showScreen('screenLobby');
+                }
+                updateLobbyScreenUI(data);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // LOBBY UI & OPPSETT-KONTROLLER (KUN ADMIN KAN ENDRE INNSTILLINGER)
+        // -------------------------------------------------------------
+        function updateLobbyScreenUI(data) {
+            const isAdmin = data.hostId === userId;
+            document.getElementById('lobbyRoomCodeDisplay').textContent = data.code;
+
+            // Vis/skjul admin-begrensninger
+            const roleNotice = document.getElementById('lobbyRoleNotice');
+            const adminTestBeep = document.getElementById('adminTestBeepContainer');
+            const addBotBtn = document.getElementById('addTestBotBtn');
+            const startBtn = document.getElementById('startGameBtn');
+            const startBtnText = document.getElementById('startGameBtnText');
+            const pickerHint = document.getElementById('pickerMapHint');
+
+            if (roleNotice) roleNotice.classList.toggle('hidden', isAdmin);
+            if (adminTestBeep) adminTestBeep.classList.toggle('hidden', !isAdmin);
+            if (addBotBtn) addBotBtn.classList.toggle('hidden', !isAdmin);
+
+            document.querySelectorAll('.admin-only-control').forEach((el) => {
+                el.disabled = !isAdmin;
+            });
+
+            if (startBtn && startBtnText) {
+                startBtn.disabled = !isAdmin;
+                startBtnText.textContent = isAdmin ? 'Start Leken Nå!' : 'Venter på at verten starter leken...';
+            }
+
+            if (pickerHint) {
+                pickerHint.textContent = isAdmin
+                    ? 'Søk sted, klikk i kartet eller dra nålen for å flytte sentrum'
+                    : 'Kun verten (admin) kan flytte leteområdet';
+            }
+
+            // Oppdater spillerens valgte lyd i nedtrekksmenyen
+            const me = data.players?.[userId];
+            const soundSelect = document.getElementById('playerBeepSoundSelect');
+            if (soundSelect && me?.beepSound) {
+                soundSelect.value = me.beepSound;
+            }
+
+            const players = Object.values(data.players || {});
+            document.getElementById('playerCountText').textContent = players.length;
+
+            const listEl = document.getElementById('playerListContainer');
+            listEl.innerHTML = '';
+
+            players.forEach((p) => {
+                const isSeeker = p.role === 'seeker';
+                const isMe = p.id === userId;
+                const isHostPlayer = p.id === data.hostId;
+                const totalPts = p.totalPoints || 0;
+                const item = document.createElement('div');
+                if (isAdmin) {
+                    item.onclick = () => selectSeekerManually(p.id);
+                }
+                item.className = `${isAdmin ? 'cursor-pointer' : 'cursor-default'} p-2.5 rounded-xl border flex items-center justify-between transition ${
+                    isSeeker
+                        ? 'bg-red-950/40 border-red-500/60 text-white'
+                        : 'bg-slate-900/80 border-slate-700/70 text-slate-200'
+                }`;
+
+                item.innerHTML = `
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                            isSeeker ? 'bg-red-600 text-white' : 'bg-emerald-600/80 text-white'
+                        }">
+                            <i class="fa-solid ${isSeeker ? 'fa-magnifying-glass' : 'fa-eye-slash'}"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold flex items-center gap-1.5 flex-wrap">
+                                <span>${escapeHtml(p.name)}</span>
+                                ${isHostPlayer ? '<span class="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 rounded">Vert</span>' : ''}
+                                ${isMe ? '<span class="text-[10px] bg-blue-600/30 text-blue-300 px-1.5 rounded">Deg</span>' : ''}
+                                ${p.isBot ? '<span class="text-[10px] bg-slate-700 text-slate-300 px-1.5 rounded">Bot</span>' : ''}
+                                ${totalPts > 0 ? `<span class="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 rounded font-mono">${totalPts}p</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <span class="text-[11px] font-bold px-2.5 py-1 rounded-lg ${
+                        isSeeker ? 'bg-red-600 text-white' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                    }">
+                        ${isSeeker ? 'LETER' : 'GJEMMER'}
+                    </span>
+                `;
+                listEl.appendChild(item);
+            });
+
+            // Oppdater radius-nedtrekksmeny
+            document.getElementById('chosenRadiusBadge').textContent = `${data.radius}m`;
+            const radiusSelect = document.getElementById('radiusSelect');
+            if (radiusSelect) {
+                radiusSelect.value = String(data.radius);
+            }
+
+            // Oppdater nedtrekksmeny for valg av leter
+            const seekerMode = data.seekerMode || 'manual';
+            const modeSelect = document.getElementById('seekerModeSelect');
+            const rerollBtn = document.getElementById('rerollSeekerBtn');
+            const modeHint = document.getElementById('seekerModeHintText');
+            if (modeSelect) {
+                modeSelect.value = seekerMode;
+            }
+            if (rerollBtn) {
+                rerollBtn.classList.toggle('hidden', !isAdmin || seekerMode === 'manual');
+            }
+            if (modeHint) {
+                const hints = {
+                    manual: isAdmin
+                        ? 'Trykk på en spiller i listen over for å velge manuelt som Leter.'
+                        : 'Verten velger leter manuelt blant spillerne.',
+                    random: 'En tilfeldig spiller trekkes som Leter.',
+                    least_points: 'Spilleren med minst poeng totalt blir Leter (tilfeldig ved poenglikhet).',
+                    most_points: 'Spilleren med mest poeng totalt blir Leter (tilfeldig ved poenglikhet).'
+                };
+                modeHint.textContent = hints[seekerMode] || hints.manual;
+            }
+
+            // Oppdater radar-intervall-knapper
+            const intervalSecs = Number(data.radarInterval || 180);
+            const mins = Math.round(intervalSecs / 60);
+            document.getElementById('chosenRadarBadge').textContent = `Hvert ${mins}. min`;
+            document.querySelectorAll('.radar-btn').forEach((btn) => {
+                const val = Number(btn.getAttribute('data-radar'));
+                if (val === intervalSecs) {
+                    btn.className = 'admin-only-control radar-btn py-2 text-xs font-bold rounded-xl border border-indigo-500 bg-indigo-600/30 text-white shadow disabled:opacity-60';
+                } else {
+                    btn.className = 'admin-only-control radar-btn py-2 text-xs font-bold rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-500 transition disabled:opacity-60';
+                }
+            });
+
+            // Oppdater pip-intervall-knapper
+            const beepSecs = Number(data.beepInterval || 180);
+            const beepMins = Math.round(beepSecs / 60);
+            const beepBadge = document.getElementById('chosenBeepIntervalBadge');
+            if (beepBadge) beepBadge.textContent = `Hvert ${beepMins}. min`;
+            document.querySelectorAll('.beep-interval-btn').forEach((btn) => {
+                const val = Number(btn.getAttribute('data-beep-interval'));
+                if (val === beepSecs) {
+                    btn.className = 'admin-only-control beep-interval-btn py-2 text-xs font-bold rounded-xl border border-amber-500 bg-amber-500/20 text-white shadow disabled:opacity-60';
+                } else {
+                    btn.className = 'admin-only-control beep-interval-btn py-2 text-xs font-bold rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:border-amber-500 transition disabled:opacity-60';
+                }
+            });
+
+            // Oppdater kartmarkør og sirkel i lobby (kun admin kan dra markøren)
+            if (pickerMap && pickerMarker && pickerCircle && data.center) {
+                const latLng = [data.center.lat, data.center.lng];
+                pickerMarker.setLatLng(latLng);
+                if (pickerMarker.dragging) {
+                    if (isAdmin) pickerMarker.dragging.enable();
+                    else pickerMarker.dragging.disable();
+                }
+                pickerCircle.setLatLng(latLng);
+                pickerCircle.setRadius(data.radius);
+            }
+        }
+
+        function copyRoomCode() {
+            if (!currentRoomCode) return;
+            const tempInput = document.createElement('input');
+            tempInput.value = currentRoomCode;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            try {
+                document.execCommand('copy');
+                document.getElementById('copyBtnText').textContent = 'Kopiert!';
+                showToast(`Romkode ${currentRoomCode} kopiert!`, 'success');
+                setTimeout(() => {
+                    const btn = document.getElementById('copyBtnText');
+                    if (btn) btn.textContent = 'Kopier';
+                }, 2000);
+            } catch (e) {
+                showToast(`Romkode: ${currentRoomCode}`, 'info');
+            }
+            document.body.removeChild(tempInput);
+        }
+
+        async function addTestPlayer() {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            const botNames = ['Test-Ola', 'Test-Kari', 'Test-Per', 'Test-Nora', 'Test-Emil'];
+            const botSounds = ['dog', 'airhorn', 'alarm', 'whistle'];
+            const existingCount = Object.keys(currentRoomData.players).length;
+            const botName = botNames[(existingCount - 1) % botNames.length] || `Bot_${existingCount}`;
+            const botId = 'bot_' + Math.random().toString(36).substring(2, 8);
+
+            const centerLat = currentRoomData.center?.lat || 59.9139;
+            const centerLng = currentRoomData.center?.lng || 10.7522;
+            const offsetLat = (Math.random() - 0.5) * 0.0006;
+            const offsetLng = (Math.random() - 0.5) * 0.0008;
+
+            const botPlayer = {
+                id: botId,
+                name: botName,
+                role: 'hider',
+                status: 'hiding',
+                foundRank: null,
+                roundPoints: 0,
+                totalPoints: 0,
+                beepSound: botSounds[existingCount % botSounds.length],
+                lat: centerLat + offsetLat,
+                lng: centerLng + offsetLng,
+                lastUpdate: Date.now(),
+                isBot: true
+            };
+
+            await syncRoomUpdates({
+                [`players.${botId}`]: botPlayer
+            });
+            showToast(`${botName} ble lagt til i rommet!`, 'info');
+        }
+
+        async function setZoneRadius(radius) {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            await syncRoomUpdates({ radius: Number(radius) });
+        }
+
+        async function setRadarInterval(seconds) {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            await syncRoomUpdates({ radarInterval: Number(seconds) });
+        }
+
+        async function setBeepInterval(seconds) {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            await syncRoomUpdates({ beepInterval: Number(seconds) });
+        }
+
+        async function updateZoneCenter(lat, lng) {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            if (pickerMap && pickerMarker && pickerCircle) {
+                pickerMarker.setLatLng([lat, lng]);
+                pickerCircle.setLatLng([lat, lng]);
+            }
+            await syncRoomUpdates({
+                center: { lat: Number(lat), lng: Number(lng) }
+            });
+        }
+
+        async function selectSeekerManually(targetId, switchModeToManual = true) {
+            if (!currentRoomData || currentRoomData.hostId !== userId || !currentRoomData.players) return;
+            const updates = {};
+            if (switchModeToManual) {
+                updates.seekerMode = 'manual';
+            }
+            Object.keys(currentRoomData.players).forEach((pid) => {
+                updates[`players.${pid}.role`] = (pid === targetId) ? 'seeker' : 'hider';
+            });
+            await syncRoomUpdates(updates);
+            const chosen = currentRoomData.players[targetId];
+            if (chosen) showToast(`${chosen.name} er valgt som Leter!`, 'info');
+        }
+
+        function pickSeekerIdByMode(mode, playersList) {
+            if (!playersList || playersList.length === 0) return null;
+            if (mode === 'least_points') {
+                const minPts = Math.min(...playersList.map((p) => p.totalPoints || 0));
+                const tied = playersList.filter((p) => (p.totalPoints || 0) === minPts);
+                return tied[Math.floor(Math.random() * tied.length)].id;
+            }
+            if (mode === 'most_points') {
+                const maxPts = Math.max(...playersList.map((p) => p.totalPoints || 0));
+                const tied = playersList.filter((p) => (p.totalPoints || 0) === maxPts);
+                return tied[Math.floor(Math.random() * tied.length)].id;
+            }
+            // 'random' eller fallback
+            return playersList[Math.floor(Math.random() * playersList.length)].id;
+        }
+
+        async function changeSeekerSelectionMode(mode) {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            const playersList = Object.values(currentRoomData.players || {});
+            const updates = { seekerMode: mode };
+
+            if (mode !== 'manual' && playersList.length > 0) {
+                const chosenId = pickSeekerIdByMode(mode, playersList);
+                playersList.forEach((p) => {
+                    updates[`players.${p.id}.role`] = p.id === chosenId ? 'seeker' : 'hider';
+                });
+                const chosenPlayer = currentRoomData.players[chosenId];
+                await syncRoomUpdates(updates);
+                if (chosenPlayer) {
+                    showToast(`${chosenPlayer.name} ble valgt som Leter!`, 'info');
+                }
+            } else {
+                await syncRoomUpdates(updates);
+            }
+        }
+
+        async function rerollSeekerByCurrentMode() {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            const mode = currentRoomData.seekerMode || 'random';
+            await changeSeekerSelectionMode(mode);
+        }
+
+        async function startGameRound() {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            const players = Object.values(currentRoomData.players || {});
+            const mode = currentRoomData.seekerMode || 'manual';
+
+            let chosenSeekerId = players.find((p) => p.role === 'seeker')?.id;
+            if (mode !== 'manual' && players.length > 0) {
+                chosenSeekerId = pickSeekerIdByMode(mode, players);
+            } else if (!chosenSeekerId && players.length > 0) {
+                chosenSeekerId = players[0].id;
+            }
+
+            const now = Date.now();
+            const intervalMs = (currentRoomData.radarInterval || 180) * 1000;
+            const beepIntervalMs = (currentRoomData.beepInterval || 180) * 1000;
+            outOfZoneSince = null;
+            autoFoundInProgress = false;
+
+            const updates = {
+                status: 'active',
+                startedAt: now,
+                nextRadarAvailableAt: now + intervalMs,
+                nextBeepAvailableAt: now + beepIntervalMs,
+                radarRevealedUntil: 0,
+                foundOrder: [],
+                pendingFoundRequest: null,
+                beepEvent: null
+            };
+
+            // Nullstill rundestatus og sett valgt rolle for alle spillere
+            Object.keys(currentRoomData.players).forEach((pid) => {
+                updates[`players.${pid}.role`] = pid === chosenSeekerId ? 'seeker' : 'hider';
+                updates[`players.${pid}.status`] = 'hiding';
+                updates[`players.${pid}.foundRank`] = null;
+                updates[`players.${pid}.roundPoints`] = 0;
+            });
+
+            await syncRoomUpdates(updates);
+            showToast("Leken er i gang! Gjemmerne har fått forsprang.", "success");
+        }
+
+        async function endRound() {
+            stopGameLoop();
+            await releaseWakeLock();
+            await syncRoomUpdates({
+                status: 'scoreboard',
+                pendingFoundRequest: null
+            });
+            showToast("Runden er avsluttet! Se poengoversikten.", "info");
+        }
+
+        async function returnToLobbyForNextRound() {
+            if (!currentRoomData) return;
+            if (currentRoomData.hostId !== userId) {
+                showToast("Venter på at verten (admin) tar rommet tilbake til lobbyen.", "info");
+                return;
+            }
+            const updates = {
+                status: 'lobby',
+                foundOrder: [],
+                pendingFoundRequest: null,
+                radarRevealedUntil: 0,
+                beepEvent: null
+            };
+            Object.keys(currentRoomData.players || {}).forEach((pid) => {
+                updates[`players.${pid}.status`] = 'hiding';
+                updates[`players.${pid}.foundRank`] = null;
+                updates[`players.${pid}.roundPoints`] = 0;
+            });
+            await syncRoomUpdates(updates);
+        }
+
+        // -------------------------------------------------------------
+        // LETERENS RADAR-FUNKSJON (3, 5 ELLER 10 MINUTTERS INTERVALL)
+        // -------------------------------------------------------------
+        async function activateSeekerRadar() {
+            if (!currentRoomData) return;
+            const me = currentRoomData.players?.[userId];
+            if (!me || me.role !== 'seeker') return;
+
+            const now = Date.now();
+            if (now < (currentRoomData.nextRadarAvailableAt || 0)) {
+                showToast("Radaren lader fortsatt opp. Vent til nedtellingen er ferdig.", "warning");
+                return;
+            }
+
+            const intervalMs = (currentRoomData.radarInterval || 180) * 1000;
+            const revealDurationMs = 20000; // Viser gjemmernes posisjon i 20 sekunder
+
+            await syncRoomUpdates({
+                radarRevealedUntil: now + revealDurationMs,
+                nextRadarAvailableAt: now + intervalMs
+            });
+            showToast("Radar aktivert! Gjemmerne vises på kartet i 20 sekunder.", "success");
+        }
+
+        async function unlockRadarForTesting() {
+            if (!currentRoomData) return;
+            const now = Date.now();
+            await syncRoomUpdates({
+                nextRadarAvailableAt: now,
+                nextBeepAvailableAt: now
+            });
+            showToast("Radar og pip er låst opp for testing!", "info");
+        }
+
+        function formatSecondsMMSS(totalSec) {
+            const s = Math.max(0, Math.ceil(totalSec));
+            const mins = Math.floor(s / 60);
+            const secs = s % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        function updateRadarAndTimerUI() {
+            if (!currentRoomData || currentRoomData.status !== 'active') return;
+            const now = Date.now();
+            const me = currentRoomData.players?.[userId];
+            const isSeeker = me?.role === 'seeker';
+
+            const revealedUntil = currentRoomData.radarRevealedUntil || 0;
+            const nextAvailableAt = currentRoomData.nextRadarAvailableAt || 0;
+            const isRadarScanning = now < revealedUntil;
+
+            // Oppdater Leterens kontrollpanel
+            const seekerBar = document.getElementById('seekerControlBar');
+            const radarBtn = document.getElementById('activateRadarBtn');
+            const radarLabel = document.getElementById('radarBtnLabel');
+            const beepBtn = document.getElementById('seekerBeepBtn');
+            const beepBtnLabel = document.getElementById('seekerBeepBtnLabel');
+            const testUnlockBtn = document.getElementById('unlockRadarTestBtn');
+
+            if (isSeeker) {
+                seekerBar.classList.remove('hidden');
+
+                const nextBeepAt = currentRoomData.nextBeepAvailableAt || 0;
+                const isBeepCoolingDown = now < nextBeepAt;
+
+                // Oppdater «Gi et lite pip»-knappens nedkjøling (3, 5 eller 10 min intervall)
+                if (beepBtn && beepBtnLabel) {
+                    if (isBeepCoolingDown) {
+                        const beepWaitSecs = Math.ceil((nextBeepAt - now) / 1000);
+                        beepBtn.disabled = true;
+                        beepBtn.className = 'bg-slate-900 text-slate-400 border border-slate-700 font-bold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-not-allowed';
+                        beepBtnLabel.textContent = `Pip ${formatSecondsMMSS(beepWaitSecs)}`;
+                    } else {
+                        beepBtn.disabled = false;
+                        beepBtn.className = 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-md shrink-0';
+                        beepBtnLabel.textContent = 'Gi et lite pip';
+                    }
+                }
+
+                const isRadarCoolingDown = !isRadarScanning && now < nextAvailableAt;
+
+                if (isRadarScanning) {
+                    const secsLeft = Math.ceil((revealedUntil - now) / 1000);
+                    radarBtn.disabled = true;
+                    radarBtn.className = 'flex-1 py-2.5 px-2.5 rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow bg-indigo-600 text-white border border-indigo-400 animate-pulse';
+                    radarLabel.textContent = `Radar aktiv (${secsLeft}s)`;
+                } else if (!isRadarCoolingDown) {
+                    radarBtn.disabled = false;
+                    radarBtn.className = 'flex-1 py-2.5 px-2.5 rounded-xl font-extrabold text-xs flex items-center justify-center gap-1.5 transition shadow-lg shadow-indigo-600/30 bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400 active:scale-95';
+                    radarLabel.textContent = 'Vis gjemmere!';
+                } else {
+                    const waitSecs = Math.ceil((nextAvailableAt - now) / 1000);
+                    radarBtn.disabled = true;
+                    radarBtn.className = 'flex-1 py-2.5 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 bg-slate-900 text-slate-400 border border-slate-700 cursor-not-allowed';
+                    radarLabel.textContent = `Radar ${formatSecondsMMSS(waitSecs)}`;
+                }
+
+                if (testUnlockBtn) {
+                    testUnlockBtn.classList.toggle('hidden', !(isRadarCoolingDown || isBeepCoolingDown));
+                }
+            } else {
+                seekerBar.classList.add('hidden');
+                if (testUnlockBtn) testUnlockBtn.classList.add('hidden');
+            }
+
+            // Varsle gjemmere når radaren er aktiv
+            const hiderAlert = document.getElementById('hiderRadarAlert');
+            const hiderSecsEl = document.getElementById('hiderRadarSecsText');
+            if (!isSeeker && me?.status !== 'found' && isRadarScanning) {
+                const secsLeft = Math.ceil((revealedUntil - now) / 1000);
+                hiderAlert.classList.remove('hidden');
+                if (hiderSecsEl) hiderSecsEl.textContent = `${secsLeft}s`;
+            } else {
+                hiderAlert.classList.add('hidden');
+            }
+
+            // Oppdater kartmarkører slik at gjemmere skjules straks de 20 sekundene utløper
+            if (activeMap) {
+                renderActiveMapMarkers(currentRoomData);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // FUNNET-REGISTRERING MED TOVEIS BEKREFTELSE & POENGSYSTEM
+        // -------------------------------------------------------------
+        function openFoundModal() {
+            if (!currentRoomData) return;
+            const listEl = document.getElementById('foundCandidatesList');
+            listEl.innerHTML = '';
+
+            const hiders = Object.values(currentRoomData.players || {}).filter(
+                (p) => p.role === 'hider' && p.status !== 'found'
+            );
+
+            if (hiders.length === 0) {
+                listEl.innerHTML = `<p class="text-xs text-slate-400 text-center py-4">Alle gjemmere er allerede funnet!</p>`;
+            } else {
+                hiders.forEach((h) => {
+                    const isPending = currentRoomData.pendingFoundRequest?.targetId === h.id;
+                    const row = document.createElement('div');
+                    row.className = 'p-3 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-between gap-2';
+
+                    row.innerHTML = `
+                        <div>
+                            <div class="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>${escapeHtml(h.name)}</span>
+                                ${h.isBot ? '<span class="text-[10px] bg-slate-700 text-slate-300 px-1.5 rounded">Test-bot</span>' : ''}
+                            </div>
+                            <div class="text-[10px] text-slate-400">
+                                ${isPending ? 'Venter på bekreftelse fra spiller...' : 'Aktiv gjemmer'}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            ${
+                                h.isBot
+                                    ? `<button onclick="confirmPlayerFound('${h.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg transition">
+                                         Godkjenn (Bot)
+                                       </button>`
+                                    : `<button onclick="sendFoundRequest('${h.id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg transition">
+                                         ${isPending ? 'Send på nytt' : 'Velg funnet'}
+                                       </button>`
+                            }
+                        </div>
+                    `;
+                    listEl.appendChild(row);
+                });
+            }
+
+            document.getElementById('foundSelectModal').classList.remove('hidden');
+        }
+
+        function closeFoundModal() {
+            document.getElementById('foundSelectModal').classList.add('hidden');
+        }
+
+        async function sendFoundRequest(targetId) {
+            if (!currentRoomData) return;
+            const target = currentRoomData.players?.[targetId];
+            const me = currentRoomData.players?.[userId];
+            if (!target || !me) return;
+
+            await syncRoomUpdates({
+                pendingFoundRequest: {
+                    targetId: target.id,
+                    targetName: target.name,
+                    seekerId: me.id,
+                    seekerName: me.name,
+                    createdAt: Date.now()
+                }
+            });
+
+            closeFoundModal();
+            showToast(`Sendte forespørsel til ${target.name}. Venter på godkjenning...`, 'info');
+        }
+
+        async function cancelPendingFound() {
+            await syncRoomUpdates({ pendingFoundRequest: null });
+            showToast("Forespørselen ble avbrutt.", "info");
+        }
+
+        async function respondToFoundRequest(accepted) {
+            if (!currentRoomData || !currentRoomData.pendingFoundRequest) return;
+            const req = currentRoomData.pendingFoundRequest;
+            document.getElementById('confirmFoundModal').classList.add('hidden');
+
+            if (!accepted) {
+                await syncRoomUpdates({
+                    pendingFoundRequest: null,
+                    lastRejectedBy: req.targetName,
+                    lastRejectedAt: Date.now()
+                });
+                showToast("Du avviste at du var funnet.", "info");
+                return;
+            }
+
+            await confirmPlayerFound(req.targetId);
+        }
+
+        async function confirmPlayerFound(targetId) {
+            if (!currentRoomData) return;
+            const target = currentRoomData.players?.[targetId];
+            if (!target || target.status === 'found') return;
+
+            const currentOrder = Array.isArray(currentRoomData.foundOrder) ? [...currentRoomData.foundOrder] : [];
+            if (!currentOrder.includes(targetId)) {
+                currentOrder.push(targetId);
+            }
+
+            // 1. person funnet = 1 poeng, 2. person = 2 poeng, osv.
+            const rank = currentOrder.length;
+            const earnedPoints = rank;
+            const newTotal = (target.totalPoints || 0) + earnedPoints;
+
+            // Sjekk om alle gjemmere nå er funnet
+            const allPlayers = Object.values(currentRoomData.players || {});
+            const remainingHiders = allPlayers.filter(
+                (p) => p.role === 'hider' && p.id !== targetId && p.status !== 'found'
+            );
+
+            const updates = {
+                foundOrder: currentOrder,
+                pendingFoundRequest: null,
+                [`players.${targetId}.status`]: 'found',
+                [`players.${targetId}.foundRank`]: rank,
+                [`players.${targetId}.roundPoints`]: earnedPoints,
+                [`players.${targetId}.totalPoints`]: newTotal
+            };
+
+            if (remainingHiders.length === 0) {
+                updates.status = 'scoreboard';
+            }
+
+            closeFoundModal();
+            await syncRoomUpdates(updates);
+            showToast(`${target.name} er funnet som nr. ${rank} (+${earnedPoints} poeng)!`, 'success');
+        }
+
+        // -------------------------------------------------------------
+        // POENGTAVLE UI
+        // -------------------------------------------------------------
+        function updateScoreboardUI(data) {
+            const listEl = document.getElementById('scoreboardListContainer');
+            if (!listEl) return;
+            listEl.innerHTML = '';
+
+            const players = Object.values(data.players || {}).sort(
+                (a, b) => (b.totalPoints || 0) - (a.totalPoints || 0)
+            );
+
+            players.forEach((p, idx) => {
+                const isSeeker = p.role === 'seeker';
+                const roundPts = p.roundPoints || 0;
+                const totalPts = p.totalPoints || 0;
+                const statusLabel = isSeeker
+                    ? 'Var leter denne runden'
+                    : p.foundRank
+                    ? `Funnet som nr. ${p.foundRank}`
+                    : 'Ikke funnet';
+
+                const row = document.createElement('div');
+                row.className = `p-3 rounded-xl border flex items-center justify-between ${
+                    idx === 0 && totalPts > 0
+                        ? 'bg-amber-950/30 border-amber-500/50'
+                        : 'bg-slate-900/90 border-slate-700/80'
+                }`;
+
+                row.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center font-extrabold text-xs text-slate-300">
+                            #${idx + 1}
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>${escapeHtml(p.name)}</span>
+                                ${p.id === userId ? '<span class="text-[10px] bg-blue-600/30 text-blue-300 px-1.5 rounded">Deg</span>' : ''}
+                            </div>
+                            <div class="text-[10px] text-slate-400">${statusLabel}</div>
+                        </div>
+                    </div>
+                    <div class="text-right font-mono">
+                        <div class="text-xs font-extrabold text-emerald-400">+${roundPts}p</div>
+                        <div class="text-[11px] font-bold text-slate-300">Totalt: ${totalPts}p</div>
+                    </div>
+                `;
+                listEl.appendChild(row);
+            });
+
+            const isAdmin = data.hostId === userId;
+            const nextBtn = document.getElementById('nextRoundLobbyBtn');
+            const nextBtnText = document.getElementById('nextRoundBtnText');
+            if (nextBtn && nextBtnText) {
+                nextBtn.disabled = !isAdmin;
+                nextBtn.classList.toggle('opacity-50', !isAdmin);
+                nextBtnText.textContent = isAdmin
+                    ? 'Ny runde i samme rom'
+                    : 'Venter på at verten starter neste runde...';
+            }
+        }
+
+        // -------------------------------------------------------------
+        // LOBBY KARTVELGER (VELG SENTRUM & STEDSØK UTEN GPS)
+        // -------------------------------------------------------------
+        function createTileLayer() {
+            return L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap'
+            });
+        }
+
+        function initPickerMap() {
+            const container = document.getElementById('pickerMap');
+            if (!container) return;
+
+            const lat = currentRoomData?.center?.lat || 59.9139;
+            const lng = currentRoomData?.center?.lng || 10.7522;
+            const radius = currentRoomData?.radius || 35;
+
+            if (!pickerMap) {
+                pickerMap = L.map('pickerMap', { zoomControl: false }).setView([lat, lng], 16);
+                createTileLayer().addTo(pickerMap);
+
+                const isAdminInitial = currentRoomData?.hostId === userId;
+                pickerMarker = L.marker([lat, lng], { draggable: isAdminInitial }).addTo(pickerMap);
+                pickerCircle = L.circle([lat, lng], {
+                    radius: radius,
+                    color: '#3B82F6',
+                    fillColor: '#3B82F6',
+                    fillOpacity: 0.2,
+                    weight: 2
+                }).addTo(pickerMap);
+
+                pickerMarker.on('dragend', async (e) => {
+                    if (currentRoomData?.hostId !== userId) return;
+                    const pos = e.target.getLatLng();
+                    await updateZoneCenter(pos.lat, pos.lng);
+                });
+
+                pickerMap.on('click', async (e) => {
+                    if (currentRoomData?.hostId !== userId) return;
+                    await updateZoneCenter(e.latlng.lat, e.latlng.lng);
+                });
+            } else {
+                pickerMap.setView([lat, lng], 16);
+                pickerMarker.setLatLng([lat, lng]);
+                pickerCircle.setLatLng([lat, lng]);
+                pickerCircle.setRadius(radius);
+            }
+        }
+
+        function centerPickerOnUserGps() {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            if (!navigator.geolocation) {
+                showToast("Enheten støtter ikke GPS. Bruk søkefeltet over kartet.", "warning");
+                return;
+            }
+            showToast("Henter din GPS-posisjon...", "info");
+            navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                    const { latitude, longitude } = pos.coords;
+                    if (pickerMap) pickerMap.setView([latitude, longitude], 17);
+                    await updateZoneCenter(latitude, longitude);
+                    showToast("Kart sentrert på din GPS!", "success");
+                },
+                () => {
+                    showToast("Fant ikke GPS-signal. Søk opp et sted i feltet over.", "warning");
+                },
+                { enableHighAccuracy: true, timeout: 7000 }
+            );
+        }
+
+        async function searchLocation() {
+            if (!currentRoomData || currentRoomData.hostId !== userId) return;
+            const input = document.getElementById('locationSearchInput');
+            const query = input ? input.value.trim() : '';
+            if (!query) {
+                showToast("Skriv inn et stedsnavn eller en adresse først.", "info");
+                return;
+            }
+
+            try {
+                const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+                const res = await fetch(url);
+                const results = await res.json();
+
+                if (results && results.length > 0) {
+                    const lat = parseFloat(results[0].lat);
+                    const lng = parseFloat(results[0].lon);
+                    if (pickerMap) pickerMap.setView([lat, lng], 16);
+                    await updateZoneCenter(lat, lng);
+                    showToast(`Flyttet kart til: ${results[0].display_name.split(',')[0]}`, "success");
+                } else {
+                    showToast("Fant ingen treff på det søket.", "warning");
+                }
+            } catch (e) {
+                showToast("Stedsøk feilet. Prøv igjen eller klikk direkte i kartet.", "error");
+            }
+        }
+
+        // -------------------------------------------------------------
+        // AKTIVT SPILLKART & 30-SEKUNDERS GPS-SYNKRONISERING
+        // -------------------------------------------------------------
+        function initActiveMap() {
+            const container = document.getElementById('activeMap');
+            if (!container || !currentRoomData) return;
+
+            const lat = currentRoomData.center?.lat || 59.9139;
+            const lng = currentRoomData.center?.lng || 10.7522;
+            const radius = currentRoomData.radius || 50;
+
+            if (!activeMap) {
+                activeMap = L.map('activeMap', { zoomControl: false }).setView([lat, lng], 17);
+                createTileLayer().addTo(activeMap);
+
+                activeZoneCircle = L.circle([lat, lng], {
+                    radius: radius,
+                    color: '#3B82F6',
+                    fillColor: '#3B82F6',
+                    fillOpacity: 0.14,
+                    weight: 2,
+                    dashArray: '6, 6'
+                }).addTo(activeMap);
+            } else {
+                activeMap.setView([lat, lng], 17);
+                activeZoneCircle.setLatLng([lat, lng]);
+                activeZoneCircle.setRadius(radius);
+            }
+
+            updateActiveScreenUI(currentRoomData);
+        }
+
+        function recenterActiveMap() {
+            if (!activeMap || !currentRoomData) return;
+            const me = currentRoomData.players?.[userId];
+            if (me) {
+                activeMap.setView([me.lat, me.lng], 17);
+            } else if (currentRoomData.center) {
+                activeMap.setView([currentRoomData.center.lat, currentRoomData.center.lng], 17);
+            }
+        }
+
+        function startGameLoop() {
+            if (gameTickIntervalId) clearInterval(gameTickIntervalId);
+            gpsCountdown = 30;
+            forceGpsSync();
+
+            gameTickIntervalId = setInterval(() => {
+                // 1. Oppdater 30s GPS-nedtelling
+                gpsCountdown -= 1;
+                const timerEl = document.getElementById('gpsTimerCountdown');
+                if (timerEl) timerEl.textContent = `${gpsCountdown}s`;
+
+                if (gpsCountdown <= 0) {
+                    gpsCountdown = 30;
+                    forceGpsSync();
+                }
+
+                // 2. Oppdater radar-/pip-nedtelling og sjekk om gjemmer er utenfor sonen
+                updateRadarAndTimerUI();
+                evaluateZoneBoundary();
+            }, 1000);
+        }
+
+        function stopGameLoop() {
+            if (gameTickIntervalId) {
+                clearInterval(gameTickIntervalId);
+                gameTickIntervalId = null;
+            }
+            outOfZoneSince = null;
+            autoFoundInProgress = false;
+            const alertBox = document.getElementById('boundaryAlert');
+            if (alertBox) alertBox.classList.add('hidden');
+        }
+
+        async function forceGpsSync() {
+            gpsCountdown = 30;
+            const timerEl = document.getElementById('gpsTimerCountdown');
+            if (timerEl) timerEl.textContent = '30s';
+
+            if (!currentRoomData || !currentRoomData.players) return;
+
+            const updates = {};
+
+            // Simuler små bevegelser for eventuelle aktive test-boter
+            Object.values(currentRoomData.players).forEach((p) => {
+                if (p.isBot && p.status !== 'found') {
+                    updates[`players.${p.id}.lat`] = p.lat + (Math.random() - 0.5) * 0.00018;
+                    updates[`players.${p.id}.lng`] = p.lng + (Math.random() - 0.5) * 0.00024;
+                    updates[`players.${p.id}.lastUpdate`] = Date.now();
+                }
+            });
+
+            // Hent og synkroniser egen GPS-posisjon
+            const me = currentRoomData.players[userId];
+            if (me) {
+                const coords = latestGpsCoords || (await requestGpsPermission(false));
+                const nextLat = coords ? coords.lat : me.lat;
+                const nextLng = coords ? coords.lng : me.lng;
+
+                updates[`players.${userId}.lat`] = nextLat;
+                updates[`players.${userId}.lng`] = nextLng;
+                updates[`players.${userId}.lastUpdate`] = Date.now();
+
+                checkZoneBoundary(nextLat, nextLng);
+            }
+
+            if (Object.keys(updates).length > 0) {
+                await syncRoomUpdates(updates);
+            }
+        }
+
+        function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371000; // Jordens radius i meter
+            const toRad = (deg) => (deg * Math.PI) / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        function checkZoneBoundary(lat, lng) {
+            if (!currentRoomData || currentRoomData.status !== 'active' || !currentRoomData.center) return;
+            const me = currentRoomData.players?.[userId];
+            const alertBox = document.getElementById('boundaryAlert');
+            const outDistEl = document.getElementById('outDistanceText');
+            const countdownEl = document.getElementById('boundaryCountdownText');
+            if (!alertBox) return;
+
+            // Kun aktive gjemmere har sonebegrensning med utslag
+            if (!me || me.role !== 'hider' || me.status === 'found') {
+                outOfZoneSince = null;
+                alertBox.classList.add('hidden');
+                return;
+            }
+
+            const dist = calculateDistanceMeters(
+                lat,
+                lng,
+                currentRoomData.center.lat,
+                currentRoomData.center.lng
+            );
+            const radius = Number(currentRoomData.radius || 35);
+
+            if (dist > radius) {
+                if (outOfZoneSince === null) {
+                    outOfZoneSince = Date.now();
+                }
+                const elapsedSec = Math.floor((Date.now() - outOfZoneSince) / 1000);
+                const remainingSec = Math.max(0, 60 - elapsedSec);
+
+                alertBox.classList.remove('hidden');
+                if (outDistEl) {
+                    outDistEl.textContent = `${Math.round(dist)}m / ${radius}m`;
+                }
+                if (countdownEl) {
+                    countdownEl.textContent = `Kom innenfor innen ${remainingSec}s eller bli markert som funnet!`;
+                }
+
+                if (remainingSec <= 0 && !autoFoundInProgress) {
+                    autoFoundInProgress = true;
+                    showToast("Du var utenfor leteområdet i 1 minutt og ble markert som funnet!", "error");
+                    confirmPlayerFound(userId);
+                }
+            } else {
+                outOfZoneSince = null;
+                alertBox.classList.add('hidden');
+            }
+        }
+
+        function evaluateZoneBoundary() {
+            if (!currentRoomData || currentRoomData.status !== 'active') return;
+            const me = currentRoomData.players?.[userId];
+            if (!me) return;
+            const lat = latestGpsCoords ? latestGpsCoords.lat : me.lat;
+            const lng = latestGpsCoords ? latestGpsCoords.lng : me.lng;
+            checkZoneBoundary(lat, lng);
+        }
+
+        let lastNotifiedRejectionAt = 0;
+
+        function updateActiveScreenUI(data) {
+            const me = data.players?.[userId];
+            const roleBanner = document.getElementById('myRoleBanner');
+
+            if (roleBanner && me) {
+                if (me.role === 'seeker') {
+                    roleBanner.className = 'flex-1 p-2.5 rounded-xl border border-red-500/60 bg-red-950/60 text-red-200 text-center font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2';
+                    roleBanner.innerHTML = '<i class="fa-solid fa-magnifying-glass text-red-400"></i> DU LETER';
+                } else if (me.status === 'found') {
+                    roleBanner.className = 'flex-1 p-2.5 rounded-xl border border-amber-500/60 bg-amber-950/60 text-amber-200 text-center font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2';
+                    roleBanner.innerHTML = `<i class="fa-solid fa-flag text-amber-400"></i> FUNNET (Nr. ${me.foundRank || '?'})`;
+                } else {
+                    roleBanner.className = 'flex-1 p-2.5 rounded-xl border border-emerald-500/60 bg-emerald-950/60 text-emerald-200 text-center font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2';
+                    roleBanner.innerHTML = '<i class="fa-solid fa-eye-slash text-emerald-400"></i> DU GJEMMER DEG';
+                }
+            }
+
+            // Oppdater tellere for aktive og funne gjemmere
+            const players = Object.values(data.players || {});
+            const activeHiders = players.filter((p) => p.role === 'hider' && p.status !== 'found').length;
+            const foundHiders = players.filter((p) => p.role === 'hider' && p.status === 'found').length;
+
+            const hiderCountEl = document.getElementById('hiderCountText');
+            const foundCountEl = document.getElementById('foundCountText');
+            if (hiderCountEl) hiderCountEl.textContent = activeHiders;
+            if (foundCountEl) foundCountEl.textContent = foundHiders;
+
+            // Varsle leter dersom gjemmer avviste «Funnet»-forespørselen
+            if (
+                me?.role === 'seeker' &&
+                data.lastRejectedAt &&
+                data.lastRejectedAt > lastNotifiedRejectionAt &&
+                Date.now() - data.lastRejectedAt < 10000
+            ) {
+                lastNotifiedRejectionAt = data.lastRejectedAt;
+                showToast(`${data.lastRejectedBy || 'Spilleren'} avviste at de var funnet.`, 'warning');
+            }
+
+            // Håndter pågående «Funnet»-forespørsel
+            const pendingBanner = document.getElementById('pendingRequestBanner');
+            const pendingText = document.getElementById('pendingRequestText');
+            const confirmModal = document.getElementById('confirmFoundModal');
+
+            if (data.pendingFoundRequest) {
+                if (me?.role === 'seeker' && pendingBanner && pendingText) {
+                    pendingBanner.classList.remove('hidden');
+                    pendingText.textContent = `Venter på bekreftelse fra ${data.pendingFoundRequest.targetName}...`;
+                } else if (pendingBanner) {
+                    pendingBanner.classList.add('hidden');
+                }
+
+                if (data.pendingFoundRequest.targetId === userId && me?.status !== 'found' && confirmModal) {
+                    const nextRank = (Array.isArray(data.foundOrder) ? data.foundOrder.length : 0) + 1;
+                    const descEl = document.getElementById('confirmFoundDesc');
+                    const rankEl = document.getElementById('confirmFoundRankPreview');
+                    const ptsEl = document.getElementById('confirmFoundPointsPreview');
+
+                    if (descEl) {
+                        descEl.textContent = `${data.pendingFoundRequest.seekerName} melder at du er funnet! Bekreft på telefonen din for å registrere poengene dine.`;
+                    }
+                    if (rankEl) rankEl.textContent = String(nextRank);
+                    if (ptsEl) ptsEl.textContent = `${nextRank} poeng`;
+                    confirmModal.classList.remove('hidden');
+                } else if (confirmModal) {
+                    confirmModal.classList.add('hidden');
+                }
+            } else {
+                if (pendingBanner) pendingBanner.classList.add('hidden');
+                if (confirmModal) confirmModal.classList.add('hidden');
+            }
+
+            updateRadarAndTimerUI();
+            renderActiveMapMarkers(data);
+        }
+
+        function renderActiveMapMarkers(data) {
+            if (!activeMap || !data || !data.players) return;
+
+            if (activeZoneCircle && data.center) {
+                activeZoneCircle.setLatLng([data.center.lat, data.center.lng]);
+                activeZoneCircle.setRadius(Number(data.radius || 35));
+            }
+
+            const now = Date.now();
+            const me = data.players[userId];
+            const isSeeker = me?.role === 'seeker';
+            const isRadarScanning = now < (data.radarRevealedUntil || 0);
+
+            const visibleIds = new Set();
+
+            Object.values(data.players).forEach((p) => {
+                const isSelf = p.id === userId;
+                const isPlayerSeeker = p.role === 'seeker';
+                const isPlayerFound = p.status === 'found';
+
+                // Leteren ser kun aktive gjemmere når radaren skanner (i 20 sekunder)
+                const shouldShow =
+                    isSelf ||
+                    isPlayerSeeker ||
+                    isPlayerFound ||
+                    !isSeeker ||
+                    isRadarScanning;
+
+                if (!shouldShow) {
+                    if (playerMarkers[p.id]) {
+                        activeMap.removeLayer(playerMarkers[p.id]);
+                        delete playerMarkers[p.id];
+                    }
+                    return;
+                }
+
+                visibleIds.add(p.id);
+                const secsAgo = Math.max(0, Math.round((now - (p.lastUpdate || now)) / 1000));
+
+                let badgeColor = 'bg-emerald-600 border-emerald-300';
+                let dotHtml = `<div class="w-4 h-4 rounded-full bg-emerald-500 border-2 border-white shadow"></div>`;
+
+                if (isSelf) {
+                    badgeColor = 'bg-blue-600 border-blue-300';
+                    dotHtml = `<div class="pulse-marker-self"></div>`;
+                } else if (isPlayerSeeker) {
+                    badgeColor = 'bg-red-600 border-red-300';
+                    dotHtml = `<div class="w-4 h-4 rounded-full bg-red-500 border-2 border-white shadow"></div>`;
+                } else if (isPlayerFound) {
+                    badgeColor = 'bg-amber-600 border-amber-300';
+                    dotHtml = `<div class="w-4 h-4 rounded-full bg-amber-400 border-2 border-white shadow"></div>`;
+                }
+
+                const iconHtml = `
+                    <div class="player-label-icon">
+                        <div class="px-2 py-0.5 rounded-full text-[10px] font-bold text-white border ${badgeColor} shadow-md whitespace-nowrap mb-1">
+                            ${escapeHtml(p.name)} <span class="opacity-75 font-mono">(${secsAgo}s)</span>
+                        </div>
+                        ${dotHtml}
+                    </div>
+                `;
+
+                const customIcon = L.divIcon({
+                    html: iconHtml,
+                    className: 'custom-div-icon',
+                    iconSize: [110, 44],
+                    iconAnchor: [55, 34]
+                });
+
+                if (playerMarkers[p.id]) {
+                    playerMarkers[p.id].setLatLng([p.lat, p.lng]);
+                    playerMarkers[p.id].setIcon(customIcon);
+                } else {
+                    playerMarkers[p.id] = L.marker([p.lat, p.lng], { icon: customIcon }).addTo(activeMap);
+                }
+            });
+
+            // Fjern markører for spillere som ikke lenger finnes i rommet
+            Object.keys(playerMarkers).forEach((pid) => {
+                if (!visibleIds.has(pid)) {
+                    activeMap.removeLayer(playerMarkers[pid]);
+                    delete playerMarkers[pid];
+                }
+            });
+        }
+
+        // -------------------------------------------------------------
+        // SCREEN WAKE LOCK API (HOLDER SKJERMEN PÅ UNDER LEKEN)
+        // -------------------------------------------------------------
+        function updateWakeLockBadge(isActive) {
+            const dot = document.getElementById('wakeLockDot');
+            const text = document.getElementById('wakeLockText');
+            if (!dot || !text) return;
+
+            if (isActive) {
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse';
+                text.textContent = 'Skjermlås aktiv';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-slate-500 inline-block';
+                text.textContent = 'Skjermlås inaktiv';
+            }
+        }
+
+        async function requestWakeLock() {
+            if (!('wakeLock' in navigator)) return;
+            try {
+                wakeLockSentinel = await navigator.wakeLock.request('screen');
+                updateWakeLockBadge(true);
+                wakeLockSentinel.addEventListener('release', () => {
+                    updateWakeLockBadge(false);
+                });
+            } catch (err) {
+                updateWakeLockBadge(false);
+            }
+        }
+
+        async function releaseWakeLock() {
+            if (wakeLockSentinel) {
+                try {
+                    await wakeLockSentinel.release();
+                } catch (e) {}
+                wakeLockSentinel = null;
+            }
+            updateWakeLockBadge(false);
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && currentRoomData?.status === 'active') {
+                requestWakeLock();
+            }
+        });
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Gjør funksjoner tilgjengelige for HTML-knapper
+        Object.assign(window, {
+            openFirebaseModal,
+            closeFirebaseModal,
+            saveCustomFirebaseConfig,
+            useLocalModeOnly,
+            hideToast,
+            requestGpsPermission,
+            createNewRoom,
+            joinRoom,
+            copyRoomCode,
+            addTestPlayer,
+            previewMyBeepSound,
+            selectPlayerBeepSound,
+            triggerSeekerBeep,
+            setZoneRadius,
+            centerPickerOnUserGps,
+            searchLocation,
+            changeSeekerSelectionMode,
+            rerollSeekerByCurrentMode,
+            setRadarInterval,
+            setBeepInterval,
+            startGameRound,
+            endRound,
+            returnToLobbyForNextRound,
+            activateSeekerRadar,
+            unlockRadarForTesting,
+            openFoundModal,
+            closeFoundModal,
+            sendFoundRequest,
+            cancelPendingFound,
+            respondToFoundRequest,
+            confirmPlayerFound,
+            recenterActiveMap,
+            forceGpsSync
+        });
+
+        // Gjenopprett lagret kallenavn og lydvalg ved oppstart
+        const savedName = safeGetStorage('gjemsel_name');
+        if (savedName) {
+            const nameInput = document.getElementById('playerNameInput');
+            if (nameInput) nameInput.value = savedName;
+        }
+        const savedBeep = safeGetStorage('gjemsel_beep_sound');
+        if (savedBeep) {
+            const soundSelect = document.getElementById('playerBeepSoundSelect');
+            if (soundSelect) soundSelect.value = savedBeep;
+        }
+
+        // Start tilkobling ved innlasting
+        initBackend();
+    </script>
+</body>
+</html>
